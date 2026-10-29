@@ -99,12 +99,14 @@ curl -X POST http://localhost:3456/api/content/:contentId/approve \
 | GET | `/api/analytics/channel` | Whole-channel YouTube snapshot |
 | GET | `/api/readiness` | Latest production-readiness result |
 | POST | `/api/readiness/run` | Run the readiness check |
-| PUT | `/api/settings` | Update settings |
+| PUT | `/api/settings` | Update settings, including image provider/local endpoint and privately saved fal key |
 | PUT | `/api/profile` | Update the channel profile |
 | POST | `/api/automation/:action` | `pause` or `resume` scheduled automation |
 | POST | `/api/notifications/:notificationId/read` | Mark a notification as read |
 
 ### Generation jobs and ideas
+
+Image settings accepted by `PUT /api/settings`: `image_provider` (`auto`, `none`, `openai`, `gemini`, `fal`, `local`), `fal_image_model`, `local_image_backend` (`automatic1111`, `comfyui`), `local_image_url`, and `comfyui_workflow_path`. Optional `fal_api_key` is saved to the private credential file and is never included in the response or dashboard state. Blank keys keep existing credentials. `GET /api/dashboard` includes non-secret `system.imageProviders` configuration flags; these do not prove live quota or local server availability. See [image provider setup](providers.md#image-providers).
 
 | Method | Route | Purpose |
 | --- | --- | --- |

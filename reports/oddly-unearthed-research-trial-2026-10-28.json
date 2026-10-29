@@ -1,0 +1,242 @@
+{
+  "checkedAt": "2026-10-28T22:39:47.032Z",
+  "provider": "ChatGPT subscription via Codex CLI",
+  "model": "gpt-5.6-luna",
+  "webSearch": "live",
+  "shellTool": false,
+  "webEventCount": 6,
+  "webEvents": [
+    {
+      "type": "item.started",
+      "item": {
+        "id": "exec-aa7d7109-c6a3-41bd-8f4f-d69688a7b70d",
+        "type": "web_search",
+        "query": "",
+        "action": {
+          "type": "other"
+        }
+      }
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "exec-aa7d7109-c6a3-41bd-8f4f-d69688a7b70d",
+        "type": "web_search",
+        "query": "Crystal Palace pneumatic railway 1864 museum archive ...",
+        "action": {
+          "type": "search",
+          "queries": [
+            "Crystal Palace pneumatic railway 1864 museum archive",
+            "site:org.uk Crystal Palace pneumatic railway 1864"
+          ]
+        },
+        "results": [
+          {
+            "type": "text_result",
+            "domain": "www.xenophon.org.uk",
+            "ref_id": "turn0search0",
+            "title": "Crystal Palace Pneumatic Railway",
+            "url": "https://www.xenophon.org.uk/cppr.html"
+          },
+          {
+            "type": "text_result",
+            "domain": "www.subbrit.org.uk",
+            "ref_id": "turn0search1",
+            "title": "Crystal Palace Pneumatic Railway – Subterranea Britannica",
+            "url": "https://www.subbrit.org.uk/sites/crystal-palace-pneumatic-railway/"
+          },
+          {
+            "type": "text_result",
+            "domain": "www.xenophon.org.uk",
+            "ref_id": "turn0search2",
+            "title": "Rammell short",
+            "url": "https://www.xenophon.org.uk/rammellshort.html"
+          },
+          {
+            "type": "text_result",
+            "domain": "rchs.org.uk",
+            "ref_id": "turn0search11",
+            "title": "Railway & Canal Historical Society -",
+            "url": "https://rchs.org.uk/wp-content/uploads/2021/05/7-019-Capsule-Pipelines.pdf"
+          },
+          {
+            "type": "text_result",
+            "domain": "www.glias.org.uk",
+            "ref_id": "turn0search3",
+            "title": "Greater London Industrial Archaeology Society",
+            "url": "https://www.glias.org.uk/news/125news.html"
+          },
+          {
+            "type": "text_result",
+            "domain": "hd.housedivided.dickinson.edu",
+            "ref_id": "turn0search4",
+            "title": "Pneumatic Railway, near Crystal Palace, London, September, 1864, artist's impression | House Divided",
+            "url": "https://hd.housedivided.dickinson.edu/node/43346"
+          },
+          {
+            "type": "text_result",
+            "domain": "fdelaitre.org",
+            "ref_id": "turn0search5",
+            "title": "Frederic Delaitre's Lost Subways / Crystal Palace Atmospheric Railway",
+            "url": "https://fdelaitre.org/lpf2/Crystal.htm"
+          },
+          {
+            "type": "text_result",
+            "domain": "www.lurs.org.uk",
+            "ref_id": "turn0search12",
+            "title": "REPORT OF SOCIETY MEETING",
+            "url": "https://www.lurs.org.uk/04%20dec%20REPORT%20OF%20SOCIETY%20MEETING.pdf"
+          },
+          {
+            "type": "text_result",
+            "domain": "en.wikipedia.org",
+            "ref_id": "turn0search13",
+            "snippet": "The Crystal Palace Pneumatic Railway was an experimental atmospheric railway that ran in Crystal Palace Park in south London in 1864.",
+            "title": "Crystal Palace pneumatic railway",
+            "url": "https://en.wikipedia.org/wiki/Crystal_Palace_pneumatic_railway"
+          },
+          {
+            "type": "text_result",
+            "domain": "rchs.org.uk",
+            "ref_id": "turn0search14",
+            "title": "78\n\nIt is proposed to submit to the B.T.C. a list",
+            "url": "https://rchs.org.uk/wp-content/uploads/2020/10/Journal-010-Nov-1956.pdf"
+          },
+          {
+            "type": "text_result",
+            "domain": "ageconsearch.umn.edu",
+            "ref_id": "turn0search15",
+            "title": "Proceedings [of the] annual meeting.",
+            "url": "https://ageconsearch.umn.edu/record/318427/files/agecon-trf-0562.pdf"
+          }
+        ]
+      }
+    },
+    {
+      "type": "item.started",
+      "item": {
+        "id": "exec-421c5dcf-248c-459c-990a-970b7e1f04e7",
+        "type": "web_search",
+        "query": "",
+        "action": {
+          "type": "other"
+        }
+      }
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "exec-421c5dcf-248c-459c-990a-970b7e1f04e7",
+        "type": "web_search",
+        "query": "site:ltmuseum.co.uk \"Crystal Palace\" \"pneumatic\" ...",
+        "action": {
+          "type": "search",
+          "queries": [
+            "site:ltmuseum.co.uk \"Crystal Palace\" \"pneumatic\"",
+            "site:bl.uk \"Crystal Palace\" \"pneumatic railway\""
+          ]
+        },
+        "results": []
+      }
+    },
+    {
+      "type": "item.started",
+      "item": {
+        "id": "exec-f7e444f5-26a5-4fd1-a8f1-8ec49b96f840",
+        "type": "web_search",
+        "query": "",
+        "action": {
+          "type": "other"
+        }
+      }
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "exec-f7e444f5-26a5-4fd1-a8f1-8ec49b96f840",
+        "type": "web_search",
+        "query": "",
+        "action": {
+          "type": "other"
+        },
+        "results": [
+          {
+            "type": "text_result",
+            "domain": "rchs.org.uk",
+            "ref_id": "turn2view0",
+            "snippet": "Total lines: 342",
+            "url": "https://rchs.org.uk/wp-content/uploads/2021/05/7-019-Capsule-Pipelines.pdf"
+          },
+          {
+            "type": "text_result",
+            "domain": "www.subbrit.org.uk",
+            "ref_id": "turn2view1",
+            "snippet": "Total lines: 185",
+            "title": "Crystal Palace Pneumatic Railway – Subterranea Britannica",
+            "url": "https://www.subbrit.org.uk/sites/crystal-palace-pneumatic-railway/"
+          },
+          {
+            "type": "text_result",
+            "domain": "hd.housedivided.dickinson.edu",
+            "ref_id": "turn2view2",
+            "snippet": "Total lines: 39",
+            "title": "Pneumatic Railway, near Crystal Palace, London, September, 1864, artist's impression | House Divided",
+            "url": "https://hd.housedivided.dickinson.edu/node/43346"
+          }
+        ]
+      }
+    }
+  ],
+  "result": {
+    "topic": "Crystal Palace pneumatic railway of 1864",
+    "sources": [
+      {
+        "id": "rchs_capsule_pipelines",
+        "url": "https://rchs.org.uk/wp-content/uploads/2021/05/7-019-Capsule-Pipelines.pdf",
+        "title": "Capsule Pipelines",
+        "publisher": "Railway & Canal Historical Society"
+      },
+      {
+        "id": "subbrit_crystal_palace",
+        "url": "https://www.subbrit.org.uk/sites/crystal-palace-pneumatic-railway/",
+        "title": "Crystal Palace Pneumatic Railway",
+        "publisher": "Subterranea Britannica"
+      }
+    ],
+    "claims": [
+      {
+        "text": "The railway was a passenger-carrying prototype exhibited at Crystal Palace in 1864.",
+        "sourceId": "rchs_capsule_pipelines",
+        "evidenceExcerpt": "prototype during the Crystal Palace Exhibition of 1864.",
+        "limitations": "The page is a modern historical-society synthesis, not a surviving 1864 operating record."
+      },
+      {
+        "text": "It consisted of a 600-yard single tunnel and capsule system intended to demonstrate the Whitehall Pneumatic Railway.",
+        "sourceId": "rchs_capsule_pipelines",
+        "evidenceExcerpt": "This 600 yard long, single tunnel and capsule system",
+        "limitations": "The source does not independently establish how many passengers used it or the exact operating schedule."
+      },
+      {
+        "text": "The carriage was propelled through the tunnel by air pressure, acting as a piston; the route connected Sydenham and Penge gates.",
+        "sourceId": "subbrit_crystal_palace",
+        "evidenceExcerpt": "Propulsion was achieved by effectively using the train carriage as a giant piston",
+        "limitations": "The page describes the route and mechanism but does not provide a primary contemporary citation for these details."
+      }
+    ],
+    "unresolved": [
+      "The opened institutional pages do not conclusively establish the exact opening and closing dates within 1864.",
+      "The precise tunnel route remains uncertain in the opened sources."
+    ]
+  },
+  "postTrialReview": {
+    "status": "feasibility_only_not_publication_approved",
+    "sourcePagesIndependentlyInspected": true,
+    "note": "Source pages support the broad draft facts. Secondary-source independence and completeness of evidence were not established. Excerpts were shortened after inspection. The third compound claim needs separate evidence for the station names; a production validator must enforce support for each part.",
+    "completedSearchActions": 2,
+    "retrievedPageUrls": [
+      "https://rchs.org.uk/wp-content/uploads/2021/05/7-019-Capsule-Pipelines.pdf",
+      "https://www.subbrit.org.uk/sites/crystal-palace-pneumatic-railway/",
+      "https://hd.housedivided.dickinson.edu/node/43346"
+    ]
+  }
+}

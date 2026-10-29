@@ -144,7 +144,7 @@ function renderDashboard() {
   renderActivation(state.activation);
   renderReadiness(state.readiness);
   renderOperator(state.channelStrategy, state.operatorRuns || [], { ...state.system, readiness: state.readiness });
-  populateSettings(state.profile, state.settings, state.system.videoProviders || []);
+  populateSettings(state.profile, state.settings, state.system.videoProviders || [], state.system.imageProviders || []);
 }
 
 function renderReadiness(readiness = {}) {
@@ -197,10 +197,12 @@ function renderJobs(jobs) {
     container.innerHTML = empty('No generation runs yet.');
     return;
   }
-  const stages = ['strategy', 'script', 'thumbnail', 'seo', 'production', 'quality_review'];
+  const allStages = ['strategy', 'research', 'script', 'thumbnail', 'seo', 'research_audit', 'production', 'quality_review'];
   container.innerHTML = jobs.slice(0, 6).map(job => {
     const checkpoints = Array.isArray(job.checkpoints) ? job.checkpoints : [];
     const completed = new Set(checkpoints.filter(item => item.status === 'completed').map(item => item.stage));
+    const hasResearch = checkpoints.some(item => ['research', 'research_audit'].includes(item.stage));
+    const stages = allStages.filter(stage => hasResearch || !['research', 'research_audit'].includes(stage));
     const mediaTasks = Array.isArray(job.mediaTasks) ? job.mediaTasks : [];
     const mediaCompleted = mediaTasks.filter(item => item.status === 'succeeded').length;
     const mediaProviders = [...new Set(mediaTasks.map(item => label(item.provider)))].join(', ');
@@ -213,6 +215,7 @@ function renderJobs(jobs) {
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} stages saved${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reused` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Video: ${mediaCompleted}/${mediaTasks.length} clips ready · ${escapeHTML(mediaProviders)}</div>` : ''}
+        ${job.details?.research?.exceptions?.length ? `<details><summary>Research exceptions</summary>${job.details.research.exceptions.map(item => `<p>${escapeHTML(typeof item === 'string' ? item : item.message || item.reason || JSON.stringify(item))}</p>`).join('')}</details>` : ''}
         <div class="progress"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       </div>
       ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">Cancel</button>` : ''}
@@ -792,8 +795,9 @@ function renderOperator(strategy, runs, system) {
   }).join('') : empty('Research and planning will appear here when the run begins.');
 }
 
-function populateSettings(profile = {}, settings = {}, providers = []) {
+function populateSettings(profile = {}, settings = {}, providers = [], imageProviders = []) {
   const form = $('#profile-form');
+  if (form.dataset.dirty === 'true') return;
   const mapping = {
     channelName: profile.channel_name,
     goal: profile.goal,
@@ -810,7 +814,14 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
   }
   $('#approval-required').checked = settings.approval_required !== 'false';
   $('#notifications-enabled').checked = settings.notification_enabled !== 'false';
+  $('#research-scheduled-enabled').checked = settings.research_scheduled_enabled === 'true';
   const videoMapping = {
+    researchProvider: settings.research_provider || 'disabled',
+    imageProvider: settings.image_provider || 'auto',
+    falImageModel: settings.fal_image_model || 'fal-ai/flux/schnell',
+    localImageBackend: settings.local_image_backend || 'automatic1111',
+    localImageUrl: settings.local_image_url || '',
+    comfyuiWorkflowPath: settings.comfyui_workflow_path || '',
     videoProvider: settings.video_provider || 'slideshow',
     videoGenerationMode: settings.video_generation_mode || 'hybrid',
     videoClipDuration: settings.video_clip_duration || '8',
@@ -820,6 +831,13 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
     if (form.elements[name] && document.activeElement !== form.elements[name]) form.elements[name].value = value;
   }
   const selected = providers.find(provider => provider.id === videoMapping.videoProvider);
+  const image = imageProviders.find(provider => provider.id === videoMapping.imageProvider);
+  $('#image-provider-status').textContent = videoMapping.imageProvider === 'none'
+    ? 'Gradient backgrounds selected; no AI image requests will be made.'
+    : videoMapping.imageProvider === 'auto'
+      ? 'Tries configured OpenAI, Gemini, fal.ai, then local. Hosted providers may charge.'
+      : image?.available ? `${image.name} is configured. Run Production readiness to verify it.`
+        : 'Provider is not configured. Add its key or local server settings, then save.';
   $('#video-provider-status').textContent = videoMapping.videoProvider === 'auto'
     ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; local slideshow remains the final fallback.`
     : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected; no external video credentials are required.'
@@ -851,6 +869,12 @@ function selectOptions(options, selected) {
   return options.map(([value, label]) =>
     `<option value="${escapeHTML(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(label)}</option>`
   ).join('');
+}
+
+function researchWorkerLabel(checkedBy) {
+  if (!checkedBy?.provider) return 'Research worker';
+  const name = { chatgpt: 'ChatGPT', claude: 'Claude' }[checkedBy.provider] || checkedBy.provider;
+  return checkedBy.model ? `${name} · ${checkedBy.model}` : name;
 }
 
 function renderSourceEditor(source = {}, disabled = false) {
@@ -889,6 +913,7 @@ function renderClaimEditor(claim = {}, sources = [], disabled = false) {
       ${sources.length ? sources.map(source => `<label><input type="checkbox" data-claim-source="${escapeHTML(source.id)}" ${linked.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title || source.url)}</label>`).join('') : '<small>Add a source before marking this claim supported.</small>'}
     </fieldset>
     <label><span>Reviewer notes</span><textarea data-field="notes" rows="2" maxlength="1000" placeholder="Required when waived" ${disabled ? 'disabled' : ''}>${escapeHTML(claim.notes || '')}</textarea></label>
+    ${(claim.evidence || []).length ? `<details><summary>Supporting passages · ${escapeHTML(claim.machineCheckStatus || 'pending')}</summary>${claim.evidence.map(item => `<blockquote>${escapeHTML(item.passage || '')}</blockquote><small>${escapeHTML(item.location || '')} · ${escapeHTML(item.evidenceHash || '')}</small>`).join('')}</details>` : ''}
   </article>`;
 }
 
@@ -896,9 +921,13 @@ function renderProvenanceEditor(provenance = {}, canReview = true) {
   const sources = provenance.sources || [];
   const claims = provenance.claims || [];
   const summary = provenance.summary || {};
-  const statusLabel = provenance.status === 'verified' ? 'Evidence verified' : provenance.status === 'not_required' ? 'No claims declared' : `${summary.unresolvedClaims || 0} unresolved`;
+  const research = provenance.research;
+  const exceptions = [...(research?.factPack?.exceptions || []), ...(research?.audit?.exceptions || [])];
+  const statusLabel = research?.required ? (research.current ? 'Machine checked · editorial review required' : 'Research audit required') : provenance.status === 'verified' ? 'Evidence verified' : provenance.status === 'not_required' ? 'No claims declared' : `${summary.unresolvedClaims || 0} unresolved`;
   return `<section class="provenance-panel">
     <div class="panel-heading"><div><p class="eyebrow">RESEARCH &amp; PROVENANCE</p><h3>Evidence desk</h3><p>Verify sources, connect every factual claim, and record disclosure before approval.</p></div><span class="status ${provenance.status === 'verified' || provenance.status === 'not_required' ? 'success' : 'warning'}">${escapeHTML(statusLabel)}</span></div>
+    ${research?.required ? `<div class="callout"><strong>${escapeHTML(researchWorkerLabel(research.audit?.checkedBy || research.factPack?.checkedBy))}</strong><p>${research.current ? 'All audience-facing text has a matching audit. Confirm editorial accuracy and media rights before approval.' : 'Content or evidence changed, or the audit is incomplete. Save edits and run the audit again.'}</p><small>Checked ${escapeHTML(research.audit?.checkedAt || '')} · ${Number(research.audit?.coverage?.length || 0)} text units</small>${canReview ? '<button type="button" class="button secondary small" data-run-research-audit>Run research audit</button>' : ''}</div>` : ''}
+    ${exceptions.length ? `<div class="callout"><strong>Unresolved research exceptions</strong>${exceptions.map(item => `<p>${escapeHTML(typeof item === 'string' ? item : item.message || item.reason || JSON.stringify(item))}</p>`).join('')}</div>` : ''}
     <div class="provenance-toolbar"><strong>Sources</strong>${canReview ? '<button type="button" class="text-button" data-add-provenance-source>Add source +</button>' : ''}</div>
     <div id="provenance-sources" class="provenance-list">${sources.map(source => renderSourceEditor(source, !canReview)).join('') || '<p class="empty-inline">No research sources attached.</p>'}</div>
     <div class="provenance-toolbar"><strong>Claims</strong>${canReview ? '<button type="button" class="text-button" data-add-provenance-claim>Add claim +</button>' : ''}</div>
@@ -1772,13 +1801,28 @@ $('#idea-form').addEventListener('submit', async event => {
   } catch (_error) { /* toast already shown */ }
 });
 
+for (const eventName of ['input', 'change']) {
+  $('#profile-form').addEventListener(eventName, event => { event.currentTarget.dataset.dirty = 'true'; });
+}
+
 $('#profile-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const form = event.currentTarget;
+  const values = Object.fromEntries(new FormData(form));
+  const falApiKey = values.falApiKey;
+  delete values.falApiKey;
   values.bannedTopics = values.bannedTopics.split(',').map(value => value.trim()).filter(Boolean);
   try {
     await mutate('/api/profile', 'PUT', values, 'Channel setup saved.');
     await mutate('/api/settings', 'PUT', {
+      research_provider: values.researchProvider,
+      research_scheduled_enabled: $('#research-scheduled-enabled').checked,
+      image_provider: values.imageProvider,
+      fal_api_key: falApiKey || undefined,
+      fal_image_model: values.falImageModel,
+      local_image_backend: values.localImageBackend,
+      local_image_url: values.localImageUrl,
+      comfyui_workflow_path: values.comfyuiWorkflowPath,
       approval_required: $('#approval-required').checked,
       notification_enabled: $('#notifications-enabled').checked,
       channel_timezone: values.timezone,
@@ -1787,6 +1831,9 @@ $('#profile-form').addEventListener('submit', async event => {
       video_clip_duration: Number(values.videoClipDuration),
       video_max_generated_seconds: Number(values.videoMaxGeneratedSeconds)
     }, 'Operator settings saved.');
+    form.elements.falApiKey.value = '';
+    form.dataset.dirty = 'false';
+    await refreshDashboard(true);
   } catch (_error) { /* toast already shown */ }
 });
 

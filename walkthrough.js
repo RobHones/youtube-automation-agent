@@ -15,9 +15,99 @@ const {
 const { Database } = require('./database/db');
 const { checkFFmpeg, ffmpegInstallHint } = require('./utils/ffmpeg');
 const { VideoProviderRegistry } = require('./utils/video-providers');
+const { ImageGenerationService, httpUrl } = require('./utils/image-generation-service');
+const { connectChatGPTSubscription } = require('./utils/subscription-text');
 
 // Everything a beginner needs to know about each provider, in one place
 const AI_PROVIDER_GUIDE = {
+  cursor: {
+    label: 'Cursor — your Cursor plan, local or cloud (not a vendor API key)',
+    keyUrl: 'https://cursor.com/dashboard/integrations',
+    keyHint: 'starts with "cursor_"',
+    auth: 'cursor-key',
+    instructions: [
+      'Open Cursor Dashboard → Integrations and create a user API key',
+      'Copy the key. It bills this app to your Cursor plan',
+      'Choose local (agent loop on this machine) or cloud (an empty Cursor VM, no repo and no pull request)'
+    ],
+    models: [...PROVIDERS.cursor.models],
+    defaultModel: PROVIDERS.cursor.defaultModel,
+    defaultRuntime: PROVIDERS.cursor.defaultRuntime,
+    runtimeChoices: [
+      { name: 'Local — on this machine, billed to your Cursor plan', value: 'local' },
+      { name: 'Cloud — empty Cursor VM, no repo checkout, same plan', value: 'cloud' }
+    ],
+    covers: 'scripts, strategy, and SEO. Images and narration still need Gemini, OpenAI, or ElevenLabs. Requires Node.js 22.13+',
+    save(credentials, apiKey, model) {
+      credentials.aiProvider = {
+        provider: 'cursor',
+        apiKey,
+        model,
+        runtime: AI_PROVIDER_GUIDE.cursor.selectedRuntime || PROVIDERS.cursor.defaultRuntime
+      };
+    },
+    validationCreds: (apiKey, model) => ({
+      aiProvider: {
+        provider: 'cursor',
+        apiKey,
+        model,
+        runtime: AI_PROVIDER_GUIDE.cursor.selectedRuntime || PROVIDERS.cursor.defaultRuntime
+      }
+    })
+  },
+  claude: {
+    label: 'Claude — Claude Pro/Max via Claude Code (not an Anthropic API key)',
+    keyUrl: 'https://code.claude.com/docs/en/authentication',
+    keyHint: 'Claude Code subscription login',
+    auth: 'claude-cli',
+    instructions: [
+      'Install Claude Code',
+      'Run claude auth login and sign in with your Pro or Max account',
+      'Do not pass --console, and do not set ANTHROPIC_API_KEY (that switches billing to the API)',
+      'Confirm with claude auth status. authMethod should be claude.ai'
+    ],
+    models: [...PROVIDERS.claude.models],
+    defaultModel: PROVIDERS.claude.defaultModel,
+    defaultRuntime: 'local',
+    covers: 'scripts, strategy, and SEO on this machine. Cloud print mode is not available. Images and narration still need Gemini, OpenAI, or ElevenLabs',
+    save(credentials, apiKey, model) {
+      credentials.aiProvider = {
+        provider: 'claude',
+        apiKey,
+        model,
+        runtime: 'local'
+      };
+    },
+    validationCreds: (apiKey, model) => ({
+      aiProvider: { provider: 'claude', apiKey, model, runtime: 'local' }
+    })
+  },
+  chatgpt: {
+    label: 'ChatGPT — your ChatGPT plan via Codex (not an OpenAI API key)',
+    keyUrl: 'https://developers.openai.com/codex/auth',
+    keyHint: 'Codex ChatGPT sign-in',
+    auth: 'codex-cli',
+    instructions: [
+      'The walkthrough checks for an existing ChatGPT sign-in through Codex',
+      'If needed, it opens ChatGPT sign-in in your browser; finish signing in and return here',
+      'Your connection is tested before this provider is saved'
+    ],
+    models: [...PROVIDERS.chatgpt.models],
+    defaultModel: PROVIDERS.chatgpt.defaultModel,
+    defaultRuntime: 'local',
+    covers: 'scripts, strategy, and SEO with your ChatGPT plan. Images and narration need a separate provider',
+    save(credentials, apiKey, model) {
+      credentials.aiProvider = {
+        provider: 'chatgpt',
+        apiKey,
+        model,
+        runtime: 'local'
+      };
+    },
+    validationCreds: (apiKey, model) => ({
+      aiProvider: { provider: 'chatgpt', apiKey, model, runtime: 'local' }
+    })
+  },
   gemini: {
     label: 'Google Gemini — free text/TTS tiers; paid AI images',
     keyUrl: 'https://aistudio.google.com/apikey',
@@ -32,8 +122,9 @@ const AI_PROVIDER_GUIDE = {
     covers: 'scripts + voice narration on supported free tiers; AI images require paid access',
     save(credentials, apiKey, model) {
       credentials.gemini = { apiKey, model };
+      credentials.aiProvider = { provider: 'gemini', apiKey, model };
     },
-    validationCreds: (apiKey, model) => ({ gemini: { apiKey, model } })
+    validationCreds: (apiKey, model) => ({ aiProvider: { provider: 'gemini', apiKey, model } })
   },
   openai: {
     label: 'OpenAI — paid text, image, and voice models',
@@ -49,6 +140,7 @@ const AI_PROVIDER_GUIDE = {
     covers: 'scripts + images + voice narration',
     save(credentials, apiKey, model) {
       credentials.openai = { apiKey, model };
+      credentials.aiProvider = { provider: 'openai', apiKey, model };
     },
     validationCreds: (apiKey, model) => ({ aiProvider: { provider: 'openai', apiKey, model } })
   },
@@ -177,7 +269,7 @@ const VIDEO_PROVIDER_GUIDE = {
 class SetupWalkthrough {
   constructor() {
     this.cm = new CredentialManager();
-    this.totalSteps = 6;
+    this.totalSteps = 7;
   }
 
   header(step, title) {
@@ -196,6 +288,20 @@ class SetupWalkthrough {
     }
   }
 
+  async connectChatGPT() {
+    const controller = new AbortController();
+    const onInterrupt = () => controller.abort();
+    process.once('SIGINT', onInterrupt);
+    try {
+      return await connectChatGPTSubscription({
+        onOutput: text => process.stdout.write(text),
+        signal: controller.signal,
+      });
+    } finally {
+      process.removeListener('SIGINT', onInterrupt);
+    }
+  }
+
   async run() {
     console.log(chalk.cyan.bold('\n🧭 YouTube Automation Agent — Guided Walkthrough'));
     console.log(chalk.gray('═'.repeat(60)));
@@ -209,6 +315,7 @@ class SetupWalkthrough {
     try {
       await this.stepSystemCheck();
       await this.stepAIProvider();
+      await this.stepImageProvider();
       await this.stepVideoProvider();
       await this.stepYouTube();
       await this.stepChannelBasics();
@@ -227,10 +334,10 @@ class SetupWalkthrough {
   async stepSystemCheck() {
     this.header(1, 'Checking your system');
 
-    const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
-    console.log(nodeMajor >= 18
+    const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+    console.log(nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
       ? chalk.green(`  ✓ Node.js ${process.versions.node}`)
-      : chalk.red(`  ✗ Node.js ${process.versions.node} — version 18+ is required (https://nodejs.org)`));
+      : chalk.red(`  ✗ Node.js ${process.versions.node} — version 22.13+ is required (https://nodejs.org)`));
 
     const ffmpegOk = await checkFFmpeg();
     console.log(ffmpegOk
@@ -270,7 +377,7 @@ class SetupWalkthrough {
 
   // ── Step 2: AI provider ────────────────────────────────────────────────
   async stepAIProvider() {
-    this.header(2, 'Your AI provider (writes scripts, makes images & narration)');
+    this.header(2, 'Your AI text provider');
 
     if (this.cm.hasAITextProvider()) {
       const { redo } = await inquirer.prompt([{
@@ -295,11 +402,74 @@ class SetupWalkthrough {
 
     const guide = AI_PROVIDER_GUIDE[providerId];
 
-    console.log(chalk.cyan(`\nHow to get your key (${guide.keyHint}):`));
+    console.log(chalk.cyan(`\nHow to connect (${guide.keyHint}):`));
     guide.instructions.forEach((line, i) => console.log(chalk.white(`  ${i + 1}. ${line}`)));
-    console.log(chalk.white(`  → ${chalk.blue(guide.keyUrl)} (opening in your browser)`));
-    console.log(chalk.gray(`  This key covers: ${guide.covers}`));
-    this.openBrowser(guide.keyUrl);
+    if (guide.auth !== 'codex-cli') {
+      console.log(chalk.white(`  → ${chalk.blue(guide.keyUrl)} (opening in your browser)`));
+      this.openBrowser(guide.keyUrl);
+    }
+    console.log(chalk.gray(`  This covers: ${guide.covers}`));
+
+    if (guide.runtimeChoices) {
+      const runtimeAnswer = await inquirer.prompt([{
+        type: 'list',
+        name: 'runtime',
+        message: 'Where should this provider run?',
+        choices: guide.runtimeChoices,
+        default: guide.defaultRuntime
+      }]);
+      guide.selectedRuntime = runtimeAnswer.runtime;
+    } else {
+      guide.selectedRuntime = guide.defaultRuntime || null;
+      if (guide.auth === 'claude-cli') {
+        console.log(chalk.gray('  Runtime: local. This provider has no print-mode cloud reply.'));
+      }
+    }
+
+    if (guide.auth === 'codex-cli') {
+      try {
+        const connection = await this.connectChatGPT();
+        console.log(chalk.green(connection.reused
+          ? '  ✓ Using your existing ChatGPT sign-in.'
+          : '  ✓ ChatGPT sign-in completed.'));
+      } catch (error) {
+        if (error.isTtyError) throw error;
+        console.log(chalk.red(`  ✗ ${error.message}`));
+        console.log(chalk.yellow('  ChatGPT was not saved. Choose it again after completing sign-in.'));
+        return;
+      }
+    } else if (guide.auth === 'claude-cli') {
+      const { ready } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'ready',
+        message: 'Have you finished the subscription sign-in above?',
+        default: true
+      }]);
+      if (!ready) {
+        console.log(chalk.yellow('  Skipped — configure later with: npm run walkthrough'));
+        return;
+      }
+    }
+
+    if (guide.auth === 'claude-cli' || guide.auth === 'codex-cli') {
+      const { model } = await inquirer.prompt([{
+        type: 'list',
+        name: 'model',
+        message: 'Model to use:',
+        choices: guide.models,
+        default: guide.defaultModel
+      }]);
+      console.log(chalk.gray('  Testing the subscription login with a tiny request...'));
+      const ok = await this.validateAIKey(guide, 'subscription', model);
+      if (ok) {
+        guide.save(this.cm.credentials, 'subscription', model);
+        await this.cm.saveCredentials();
+        console.log(chalk.green('  ✓ Subscription login works. Saved.'));
+        return;
+      }
+      console.log(chalk.yellow('  Skipped — finish the login, then run: npm run walkthrough'));
+      return;
+    }
 
     while (true) {
       const { apiKey } = await inquirer.prompt([{
@@ -372,8 +542,62 @@ class SetupWalkthrough {
     }
   }
 
+  async stepImageProvider() {
+    this.header(3, 'Image generation (separate from video assembly)');
+    console.log(chalk.white('Hosted images use paid API credit. Local generation needs a running image server and downloaded models.'));
+    console.log(chalk.white('Keeping local slideshow video assembly does not supply images or voice narration.'));
+    const db = new Database();
+    await db.initialize();
+    try {
+      const current = await db.getAllSettings();
+      const { providerId } = await inquirer.prompt([{
+        type: 'list', name: 'providerId', message: 'Which image provider should the agent use?',
+        default: current.image_provider || 'auto',
+        choices: [
+          { name: 'Keep automatic routing across configured providers (hosted calls may charge)', value: 'auto' },
+          { name: 'fal.ai — paid per image', value: 'fal' },
+          { name: 'Local image server — no provider fee', value: 'local' },
+          { name: 'Google Gemini — paid image API, not the free text tier', value: 'gemini' },
+          { name: 'OpenAI — paid image API', value: 'openai' },
+          { name: 'Gradient backgrounds only — no image generation', value: 'none' }
+        ]
+      }]);
+      if (providerId === 'local') {
+        const { backend } = await inquirer.prompt([{
+          type: 'list', name: 'backend', message: 'Local image server type:',
+          default: current.local_image_backend || 'automatic1111',
+          choices: [{ name: 'AUTOMATIC1111 / Forge (start with --api)', value: 'automatic1111' }, { name: 'ComfyUI (API-format workflow)', value: 'comfyui' }]
+        }]);
+        const answers = await inquirer.prompt([
+          { type: 'input', name: 'url', message: 'Local image server base URL:', default: current.local_image_url || (backend === 'comfyui' ? 'http://127.0.0.1:8188' : 'http://127.0.0.1:7860'), validate: value => { try { httpUrl(value, 'Server URL'); return true; } catch (error) { return error.message; } } },
+          { type: 'input', name: 'workflow', message: 'ComfyUI API workflow file (use {{prompt}} and SaveImage):', when: () => backend === 'comfyui', default: current.comfyui_workflow_path || 'config/comfyui-image-workflow.json' }
+        ]);
+        await db.setSetting('local_image_backend', backend);
+        await db.setSetting('local_image_url', httpUrl(answers.url, 'Server URL'));
+        if (backend === 'comfyui') await db.setSetting('comfyui_workflow_path', answers.workflow);
+      } else if (['fal', 'openai', 'gemini'].includes(providerId)) {
+        const envKey = { fal: 'FAL_KEY', openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' }[providerId];
+        const { key } = await inquirer.prompt([{ type: 'password', name: 'key', mask: '*', message: `${providerId} API key (empty to keep an existing key):` }]);
+        if (key.trim()) {
+          this.cm.credentials[providerId] = { ...this.cm.credentials[providerId], apiKey: key.trim() };
+          await this.cm.saveCredentials();
+        } else if (!this.cm.credentials[providerId]?.apiKey && !process.env[envKey]) {
+          console.log(chalk.yellow('  No key supplied; existing image settings kept.'));
+          return;
+        }
+        if (providerId === 'fal') {
+          const { model } = await inquirer.prompt([{ type: 'input', name: 'model', message: 'fal.ai image endpoint:', default: current.fal_image_model || 'fal-ai/flux/schnell', validate: value => /^[\w-]+\/[\w./-]+$/.test(value) && !value.split('/').includes('..') || 'Enter a fal model endpoint ID' }]);
+          await db.setSetting('fal_image_model', model);
+        }
+      }
+      await db.setSetting('image_provider', providerId);
+      console.log(chalk.green('  Image settings saved. No image generation was requested.'));
+      console.log(chalk.gray('  Verify image access in Production readiness; hosted image tests require its paid-image option.'));
+    } finally { await db.close(); }
+  }
+
   async stepVideoProvider() {
-    this.header(3, 'Video generation provider');
+    this.header(4, 'Video generation provider');
     console.log(chalk.white('Long-form videos use hybrid assembly: selected AI clips plus local FFmpeg rendering.'));
     console.log(chalk.white('Local slideshow stays available and is the default so setup never spends credits unexpectedly.'));
     const { providerId } = await inquirer.prompt([{
@@ -414,7 +638,7 @@ class SetupWalkthrough {
 
   // ── Step 4: YouTube ────────────────────────────────────────────────────
   async stepYouTube() {
-    this.header(4, 'Connecting your YouTube channel');
+    this.header(5, 'Connecting your YouTube channel');
 
     if (this.cm.credentials.youtube && this.cm.tokens.youtube) {
       const { redo } = await inquirer.prompt([{
@@ -505,7 +729,7 @@ class SetupWalkthrough {
 
   // ── Step 5: channel basics ─────────────────────────────────────────────
   async stepChannelBasics() {
-    this.header(5, 'Channel & content basics');
+    this.header(6, 'Channel & content basics');
 
     const existing = this.cm.credentials.channel || {};
     const answers = await inquirer.prompt([
@@ -557,7 +781,7 @@ class SetupWalkthrough {
 
   // ── Step 6: summary ────────────────────────────────────────────────────
   async stepFinish() {
-    this.header(6, 'All set — here\'s what your pipeline can do');
+    this.header(7, 'All set — here\'s what your pipeline can do');
 
     await this.cm.loadCredentials();
     await this.cm.loadTokens();
@@ -565,7 +789,11 @@ class SetupWalkthrough {
 
     const hasText = this.cm.hasAITextProvider();
     const hasGemini = Boolean(creds.gemini?.apiKey || process.env.GEMINI_API_KEY);
-    const hasMedia = Boolean(creds.openai?.apiKey || process.env.OPENAI_API_KEY || hasGemini);
+    const db = new Database();
+    await db.initialize();
+    let hasImages;
+    try { hasImages = await new ImageGenerationService(creds, { db }).isAvailable(); } finally { await db.close(); }
+    const hasNarration = Boolean(creds.openai?.apiKey || process.env.OPENAI_API_KEY || hasGemini || creds.elevenLabs?.apiKey || process.env.ELEVENLABS_API_KEY);
     const hasFFmpeg = await checkFFmpeg();
     const hasUpload = Boolean(creds.youtube && this.cm.tokens.youtube);
     const videoProviders = new VideoProviderRegistry(creds).list();
@@ -573,10 +801,11 @@ class SetupWalkthrough {
 
     const rows = [
       { ok: hasText, name: 'Write scripts & pick topics', fix: 'step 2 (AI provider)' },
-      { ok: hasMedia, name: 'Generate images & voice narration', fix: 'step 2 — use a Gemini or OpenAI key' },
+      { ok: hasImages, name: 'Image provider configured (access still needs a readiness test)', fix: 'step 3 — choose local generation or a hosted image provider' },
+      { ok: hasNarration, name: 'Voice narration provider configured', fix: 'add Gemini, OpenAI, or ElevenLabs narration credentials' },
       { ok: hasFFmpeg, name: 'Assemble real .mp4 videos', fix: ffmpegInstallHint() },
-      { ok: hasVideoProvider, name: 'Generate AI video clips', fix: 'step 3 — or keep the local slideshow provider' },
-      { ok: hasUpload, name: 'Upload to YouTube', fix: 'step 4 (YouTube connection)' }
+      { ok: hasVideoProvider, name: 'Generate AI video clips', fix: 'step 4 — or keep the local slideshow provider' },
+      { ok: hasUpload, name: 'Upload to YouTube', fix: 'step 5 (YouTube connection)' }
     ];
 
     for (const row of rows) {

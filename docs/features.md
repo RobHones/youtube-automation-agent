@@ -78,6 +78,8 @@ Every production has an **Evidence desk** inside Review Studio. Autonomous resea
 
 A claim can be approved only when it links to a verified source. Unsupported claims remain blocking, and an intentional waiver requires a reviewer note. Productions with no externally verifiable factual claims are marked as not requiring provenance review. The separate factual-review and media-rights attestations remain required before scheduling.
 
+With [automatic research](providers.md#research) enabled, the desk is filled automatically from the fact pack and audit, with unresolved exceptions shown first. Editing an audited claim, source or audience-facing text makes the audit stale. Select **Run research audit** again before approval.
+
 Use the altered or synthetic media control only when the video contains realistic content that requires YouTube disclosure. The selected value is preserved in the publishing queue and included in the YouTube upload request.
 
 ## Discoverability preflight

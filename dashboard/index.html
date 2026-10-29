@@ -278,6 +278,19 @@
             <label class="toggle"><input id="notifications-enabled" type="checkbox"><span></span> Save operator notifications</label>
           </div>
           <div class="form-grid video-provider-settings">
+            <label><span>Research subscription</span><select name="researchProvider"><option value="disabled">Off (default)</option><option value="auto">Use the configured ChatGPT or Claude subscription</option><option value="chatgpt">ChatGPT subscription · Codex</option><option value="claude">Claude subscription · Claude Code</option></select><small>For evidence-backed historical documentaries. Finds sources, builds a fact pack, and audits the story before media generation. Sign in to the selected CLI on this machine.</small></label>
+            <label class="toggle"><input id="research-scheduled-enabled" type="checkbox"><span></span> Enable daily research after episode trials</label>
+          </div>
+          <div class="form-grid video-provider-settings">
+            <label><span>Image provider</span><select name="imageProvider"><option value="auto">Automatic · configured providers may charge</option><option value="none">Gradient backgrounds · no image generation</option><option value="fal">fal.ai · paid per image</option><option value="local">Local image server · no provider fee</option><option value="openai">OpenAI · paid API</option><option value="gemini">Google Gemini · paid image API</option></select><small id="image-provider-status">Images are separate from video assembly and voice narration.</small></label>
+            <label><span>fal.ai API key</span><input name="falApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"><small>Saved privately on this machine; never sent back to the browser.</small></label>
+            <label><span>fal.ai image model</span><input name="falImageModel" placeholder="fal-ai/flux/schnell"><small>Use a compatible text-to-image endpoint. Pricing depends on the model.</small></label>
+            <label><span>Local image backend</span><select name="localImageBackend"><option value="automatic1111">AUTOMATIC1111 / Forge API</option><option value="comfyui">ComfyUI</option></select></label>
+            <label><span>Local image server URL</span><input name="localImageUrl" type="url" placeholder="http://127.0.0.1:7860"><small>Start your image server separately. ComfyUI usually uses port 8188.</small></label>
+            <label><span>ComfyUI workflow file</span><input name="comfyuiWorkflowPath" placeholder="config/comfyui-image-workflow.json"><small>API-format JSON with {{prompt}} in the positive prompt and a SaveImage node.</small></label>
+          </div>
+          <p class="callout">Local image generation requires a running image server and downloaded models. Local slideshow below only assembles the video. fal.ai and local image servers do not supply voice narration.</p>
+          <div class="form-grid video-provider-settings">
             <label><span>Video provider</span><select name="videoProvider"><option value="slideshow">Local slideshow · no provider cost</option><option value="auto">Automatic capability routing</option><option value="seedance">ByteDance Seedance 2.5</option><option value="minimax_h3">MiniMax H3</option><option value="google_omni">Google Gemini Omni Flash</option><option value="kling">Kuaishou Kling 3.0 Omni</option><option value="wan">Alibaba Wan 2.7</option></select><small id="video-provider-status">Provider credentials are checked at runtime.</small></label>
             <label><span>Generation mode</span><select name="videoGenerationMode"><option value="hybrid">Hybrid · generated clips + local assembly</option><option value="slideshow">Local slideshow only</option></select></label>
             <label><span>Clip duration</span><input name="videoClipDuration" type="number" min="3" max="30" step="1"></label>

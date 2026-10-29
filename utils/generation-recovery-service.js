@@ -2,12 +2,15 @@ const fs = require('fs').promises;
 
 const GENERATION_STAGES = [
   'strategy',
+  'research',
   'script',
   'thumbnail',
   'seo',
+  'research_audit',
   'production',
   'quality_review'
 ];
+const RESEARCH_STAGES = new Set(['research', 'research_audit']);
 
 class GenerationRecoveryService {
   constructor(db, options = {}) {
@@ -78,6 +81,11 @@ class GenerationRecoveryService {
   async validateArtifact(stage, artifact) {
     if (!artifact || typeof artifact !== 'object') return false;
     if (stage === 'strategy') return Boolean(artifact.topic);
+    if (stage === 'research') return Boolean(artifact.topic && artifact.claims?.length && artifact.sources?.length && artifact.evidenceFingerprint);
+    if (stage === 'research_audit') {
+      const { auditIsCurrent } = require('./research-contract');
+      return auditIsCurrent(artifact.audit, artifact, artifact.factPack);
+    }
     if (stage === 'script') return Boolean(artifact.title && (artifact.fullScript || artifact.mainContent));
     if (stage === 'thumbnail') return this.validatePathArtifact(artifact.path);
     if (stage === 'seo') return Boolean(artifact.title && artifact.description && Array.isArray(artifact.tags));
@@ -117,7 +125,10 @@ class GenerationRecoveryService {
 
   resumePoint(checkpoints = []) {
     const byStage = new Map(checkpoints.map(checkpoint => [checkpoint.stage, checkpoint]));
-    return GENERATION_STAGES.find(stage => byStage.get(stage)?.status !== 'completed') || 'quality_review';
+    // Research stages are optional: they belong to a job only once research has started for it.
+    const researched = byStage.has('research');
+    return GENERATION_STAGES.find(stage => (researched || !RESEARCH_STAGES.has(stage)) &&
+      byStage.get(stage)?.status !== 'completed') || 'quality_review';
   }
 
   async resetFrom(jobId, requestedStage) {

@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const axios = require('axios');
 const { Logger } = require('./logger');
+const { ProvenanceService } = require('./provenance-service');
 
 class OperatorService {
   constructor(db) {
@@ -92,6 +93,11 @@ class OperatorService {
         : 'No blocked brand topics detected'));
 
     const provenance = production.provenance || {};
+    try {
+      new ProvenanceService(this.db).assertResearchCurrent(production, provenance);
+    } catch (error) {
+      checks.push(this.check('research_audit', false, error.message));
+    }
     const provenancePassed = ['verified', 'not_required'].includes(provenance.status || 'not_required');
     const unresolved = Number(provenance.summary?.unresolvedClaims || 0);
     checks.push(this.check('provenance', provenancePassed,

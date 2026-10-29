@@ -37,6 +37,7 @@ class SEOOptimizerAgent {
       if (aiSEO) {
         ({ title, description, tags } = aiSEO);
       } else {
+        if (strategy.researchRequired || strategy.factPack) throw new Error('Research documentaries require grounded metadata; template fallback is disabled');
         this.logger.info('Using template SEO optimization');
         // Generate optimized title
         title = await this.optimizeTitle(script.title, strategy);
@@ -109,6 +110,10 @@ Angle: ${strategy.angle}
 Content type: ${strategy.contentType}
 Target audience: ${strategy.targetAudience}
 Keywords: ${(strategy.keywords || []).join(', ')}
+Complete script: ${strategy.researchRequired ? script.fullScript : ''}
+Verified fact pack: ${strategy.researchRequired ? JSON.stringify(strategy.factPack) : ''}
+Research feedback: ${JSON.stringify(strategy.researchFeedback || {})}
+For a researched documentary, write only from the supplied facts and narration. Preserve uncertainty. Do not invent numbers, firsts, motives, quotations or performance claims. Include a short source list of supplied URLs in the description.
 Keep tags under YouTube's 500 character total guidance. Avoid fabricated statistics and unsupported claims.`;
 
     try {

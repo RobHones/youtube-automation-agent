@@ -44,6 +44,7 @@ class SystemTest {
       { name: 'API Validation and Security', test: () => this.testAPIValidationAndSecurity() },
       { name: 'Publishing Safety', test: () => this.testPublishingSafety() },
       { name: 'Multi-Provider Credential Validation', test: () => this.testCredentialValidation() },
+      { name: 'AI Provider Selection and Switching', test: () => this.testAIProviderSelection() },
       { name: 'AI Text Service Token Compatibility', test: () => this.testAITextServiceTokenParams() },
       { name: 'Placeholder Scheduling Guard', test: () => this.testPlaceholderSchedulingGuard() },
       { name: 'FFmpeg Resolution', test: () => this.testFFmpegResolution() },
@@ -66,6 +67,7 @@ class SystemTest {
       { name: 'Reply Drafting', test: () => this.testReplyDrafting() },
       { name: 'Reply Approval and Posting', test: () => this.testReplyApprovalAndPosting() },
       { name: 'Engagement AI Provider Wiring', test: () => this.testEngagementAIProviderWiring() },
+      { name: 'Daily Automation Task Lifecycle', test: () => this.testDailyAutomationTaskLifecycle() },
       { name: 'Engagement Sync Schedule', test: () => this.testEngagementSyncSchedule() },
       { name: 'Growth Experiment Refresh Schedule', test: () => this.testGrowthExperimentRefreshSchedule() }
     ];
@@ -1969,7 +1971,7 @@ class SystemTest {
 
     // Discussion #74: sharp 0.33's wasm32 build crashes with @emnapi/runtime >= 1.4
     // (Termux and other platforms without a native binary).
-    const [major, minor] = require('sharp/package.json').version.split('.').map(Number);
+    const [major, minor] = require('sharp').versions.sharp.split('.').map(Number);
     if (major === 0 && minor < 34) {
       throw new Error(`sharp ${major}.${minor} cannot load its wasm32 build with current @emnapi/runtime`);
     }
@@ -1985,7 +1987,7 @@ class SystemTest {
     const { CredentialManager } = require('./utils/credential-manager');
     const { YouTubeAutomationAgent } = require('./index');
 
-    const envKeys = ['OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'MOONSHOT_API_KEY', 'MIMO_API_KEY', 'GLM_API_KEY', 'HOST', 'API_KEY', 'NODE_ENV'];
+    const envKeys = ['OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'MOONSHOT_API_KEY', 'MIMO_API_KEY', 'GLM_API_KEY', 'DEEPSEEK_API_KEY', 'MINIMAX_TEXT_API_KEY', 'CURSOR_API_KEY', 'CURSOR_RUNTIME', 'CURSOR_MODEL', 'CLAUDE_RUNTIME', 'CLAUDE_MODEL', 'CODEX_RUNTIME', 'CODEX_MODEL', 'HOST', 'API_KEY', 'NODE_ENV'];
     const savedEnv = {};
     for (const key of envKeys) {
       savedEnv[key] = process.env[key];
@@ -2083,6 +2085,9 @@ class SystemTest {
 
       // #65: a failing image provider falls through to the next configured one.
       const generator = new AIVideoGenerator({ openai: { apiKey: 'test-key' }, gemini: { apiKey: 'test-key' } });
+      // Isolate routing from a local .env: a FAL_KEY or LOCAL_IMAGE_URL there would add a
+      // real (possibly paid) provider after the mocked ones.
+      generator.imageService.env = {};
       let openAIAttempts = 0;
       generator.openai.images.generate = async () => {
         openAIAttempts++;
@@ -2641,7 +2646,7 @@ class SystemTest {
     const manager = new CredentialManager();
 
     // Isolate the test from any API keys set in the environment
-    const envKeys = [...Object.values(PROVIDERS).map(p => p.envKey), 'GEMINI_API_KEY', 'MINIMAX_API_KEY'];
+    const envKeys = [...Object.values(PROVIDERS).map(p => p.envKey), 'GEMINI_API_KEY', 'MINIMAX_API_KEY', 'CURSOR_RUNTIME', 'CURSOR_MODEL', 'CLAUDE_MODEL', 'CODEX_MODEL'];
     const savedEnv = {};
     for (const key of envKeys) {
       savedEnv[key] = process.env[key];
@@ -2687,6 +2692,102 @@ class SystemTest {
       if (minimaxText.providerName !== 'MiniMax' || minimaxText.model !== PROVIDERS.minimax.defaultModel) {
         throw new Error('MINIMAX_TEXT_API_KEY did not select MiniMax text generation');
       }
+      delete process.env.MINIMAX_TEXT_API_KEY;
+
+      process.env.CURSOR_API_KEY = 'cursor_test';
+      manager.credentials = { youtube: { client_id: 'x' } };
+      if (manager.getMissingCredentials().length !== 1) {
+        throw new Error('An ambient CURSOR_API_KEY was treated as a configured text provider');
+      }
+      const ignoredCursor = new AITextService({});
+      if (ignoredCursor.isAvailable()) {
+        throw new Error('CURSOR_API_KEY alone selected the Cursor text provider');
+      }
+      delete process.env.CURSOR_API_KEY;
+
+      process.env.CURSOR_API_KEY = 'cursor_test';
+      process.env.CURSOR_RUNTIME = 'cloud';
+      const cursorFromEnv = new AITextService({});
+      if (cursorFromEnv.providerName !== 'Cursor' || cursorFromEnv.subscription.runtime !== 'cloud') {
+        throw new Error('CURSOR_RUNTIME plus CURSOR_API_KEY did not select a cloud Cursor run');
+      }
+      delete process.env.CURSOR_RUNTIME;
+      delete process.env.CURSOR_API_KEY;
+
+      process.env.CURSOR_RUNTIME = 'local';
+      process.env.CURSOR_API_KEY = 'cursor_test';
+      const explicitOpenAI = new AITextService({
+        aiProvider: { provider: 'openai', apiKey: 'sk-test', model: 'gpt-6.1-sol' }
+      });
+      if (explicitOpenAI.providerName !== 'OpenAI') {
+        throw new Error('A saved OpenAI provider lost to CURSOR_RUNTIME');
+      }
+      delete process.env.CURSOR_RUNTIME;
+      delete process.env.CURSOR_API_KEY;
+
+      const claude = new AITextService({
+        aiProvider: { provider: 'claude', apiKey: 'subscription', model: 'sonnet', runtime: 'local' }
+      });
+      if (!claude.isAvailable() || claude.providerName !== 'Claude' || claude.subscription.runtime !== 'local') {
+        throw new Error('Claude subscription credentials were not accepted');
+      }
+      let claudeRequest = null;
+      claude._generateSubscription = async (subscription, prompt) => {
+        claudeRequest = { subscription, prompt };
+        return 'READY';
+      };
+      if (await claude.generateText('Reply with exactly READY.') !== 'READY' || claudeRequest.subscription.model !== 'sonnet') {
+        throw new Error('Claude generateText did not stay on the subscription runner');
+      }
+
+      process.env.CODEX_RUNTIME = 'local';
+      process.env.CODEX_MODEL = 'gpt-5.6-terra';
+      const chatgpt = new AITextService({});
+      if (chatgpt.providerName !== 'ChatGPT' || chatgpt.model !== 'gpt-5.6-terra' || chatgpt.subscription.runtime !== 'local') {
+        throw new Error('CODEX_RUNTIME did not select the ChatGPT subscription');
+      }
+      delete process.env.CODEX_RUNTIME;
+      delete process.env.CODEX_MODEL;
+
+      const {
+        cursorAgentOptions,
+        isUnsupportedSandboxError,
+        buildClaudeArgs,
+        buildCodexArgs
+      } = require('./utils/subscription-text');
+      const localCursor = cursorAgentOptions({
+        apiKey: 'cursor_test',
+        model: 'composer-2.5',
+        runtime: 'local',
+        cwd: 'C:\\scratch',
+        sandbox: true
+      });
+      if (localCursor.tools.length !== 0 || localCursor.local.settingSources.length !== 0 || !localCursor.local.sandboxOptions.enabled || localCursor.cloud) {
+        throw new Error('Local Cursor text options can still edit the workspace');
+      }
+      const cloudCursor = cursorAgentOptions({
+        apiKey: 'cursor_test',
+        model: 'auto',
+        runtime: 'cloud',
+        cwd: 'C:\\scratch'
+      });
+      if (cloudCursor.cloud.repos.length !== 0 || cloudCursor.tools || cloudCursor.systemPrompt || cloudCursor.local) {
+        throw new Error('Cloud Cursor text options must be an empty-repo run without local tool settings');
+      }
+      if (!isUnsupportedSandboxError(new Error('sandboxing is not supported on this host'))) {
+        throw new Error('Unsupported sandbox errors were not recognized');
+      }
+      if (isUnsupportedSandboxError(new Error('Invalid API key'))) {
+        throw new Error('An auth error was treated as an unsupported sandbox');
+      }
+      const claudeArgs = buildClaudeArgs('sonnet');
+      if (!claudeArgs.includes('--safe-mode') || !claudeArgs.includes('--disallowedTools') || claudeArgs.includes('--bare') || claudeArgs.includes('--cloud')) {
+        throw new Error('Claude print args are not the subscription-safe local command');
+      }
+      const codexArgs = buildCodexArgs({ model: 'gpt-5.6-luna', cwd: 'C:\\scratch', outputPath: 'C:\\scratch\\out.txt' });
+      if (!codexArgs.includes('--sandbox') || !codexArgs.includes('read-only') || !codexArgs.includes('--ephemeral') || codexArgs.includes('cloud')) {
+        throw new Error('Codex exec args are not the local read-only command');
+      }
     } finally {
       for (const key of envKeys) {
         if (savedEnv[key] === undefined) {
@@ -2698,6 +2799,74 @@ class SystemTest {
     }
 
     this.logger.info('Credential validation test completed successfully');
+  }
+
+  async testAIProviderSelection() {
+    const { AITextService, PROVIDERS, GEMINI_DEFAULT_MODEL } = require('./utils/ai-text-service');
+    const { AI_PROVIDER_GUIDE } = require('./walkthrough');
+    const inquirer = require('inquirer');
+    const envKeys = [...Object.values(PROVIDERS).map(p => p.envKey), 'GEMINI_API_KEY', 'CURSOR_RUNTIME'];
+    const savedEnv = {};
+    for (const key of envKeys) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    const originalPrompt = inquirer.prompt;
+
+    try {
+      const legacy = new AITextService({ openai: { apiKey: 'test-openai', model: 'saved-model' } });
+      if (legacy.providerName !== 'OpenAI' || legacy.model !== 'saved-model' || !legacy.isAvailable()) {
+        throw new Error('Legacy saved OpenAI credentials were not used for text generation');
+      }
+
+      // Existing environment configuration must not override a newly saved choice.
+      process.env.CURSOR_API_KEY = 'cursor_test';
+      process.env.CURSOR_RUNTIME = 'local';
+      process.env.CLAUDE_RUNTIME = 'local';
+      process.env.CODEX_RUNTIME = 'local';
+      process.env.OPENAI_API_KEY = 'ambient-openai';
+      for (const previousProvider of ['cursor', 'claude', 'chatgpt', 'openrouter']) {
+        for (const id of ['openai', 'gemini']) {
+          const credentials = {
+            aiProvider: { provider: previousProvider, apiKey: 'old-key', runtime: 'local' },
+            openai: { apiKey: 'old-openai' },
+            gemini: { apiKey: 'old-gemini' }
+          };
+          const guide = AI_PROVIDER_GUIDE[id];
+          guide.save(credentials, 'new-key', guide.defaultModel);
+          const selected = new AITextService(credentials);
+          const expected = id === 'gemini' ? 'Google Gemini' : 'OpenAI';
+          if (selected.providerName !== expected || selected.model !== guide.defaultModel) {
+            throw new Error(`Switching from ${previousProvider} to ${id} kept the old text provider`);
+          }
+          const otherMediaProvider = id === 'gemini' ? 'openai' : 'gemini';
+          if (credentials[otherMediaProvider].apiKey !== `old-${otherMediaProvider}`) {
+            throw new Error('Switching text providers removed an existing media credential');
+          }
+        }
+      }
+
+      // The classic setup must persist the same explicit choice as the walkthrough.
+      for (const id of ['openai', 'gemini']) {
+        const manager = new CredentialManager();
+        manager.credentials = { aiProvider: { provider: 'chatgpt', apiKey: 'subscription', runtime: 'local' } };
+        const model = id === 'openai' ? PROVIDERS.openai.defaultModel : GEMINI_DEFAULT_MODEL;
+        inquirer.prompt = async () => ({ apiKey: 'new-key', model });
+        manager.saveCredentials = async () => {};
+        if (id === 'openai') await manager.setupOpenAICredentials();
+        else await manager.setupGeminiCredentials();
+        const selected = new AITextService(manager.credentials);
+        if (manager.credentials.aiProvider.provider !== id || selected.model !== model || selected.subscription) {
+          throw new Error(`Classic setup did not switch the text provider to ${id}`);
+        }
+      }
+    } finally {
+      inquirer.prompt = originalPrompt;
+      for (const key of envKeys) {
+        if (savedEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = savedEnv[key];
+      }
+    }
   }
 
   async testAITextServiceTokenParams() {
@@ -3193,7 +3362,7 @@ class SystemTest {
       const manager = new CredentialManager();
       manager.credentials = { youtube: { client_id: 'x' }, ...credentials };
 
-      const envKeys = [...Object.values(PROVIDERS).map(p => p.envKey), 'GEMINI_API_KEY'];
+      const envKeys = [...Object.values(PROVIDERS).map(p => p.envKey), 'GEMINI_API_KEY', 'CURSOR_RUNTIME', 'CURSOR_MODEL', 'CLAUDE_MODEL', 'CODEX_MODEL'];
       const savedEnv = {};
       for (const key of envKeys) {
         savedEnv[key] = process.env[key];
@@ -3809,8 +3978,14 @@ class SystemTest {
     // (manager.credentials), the shape the walkthrough writes to credentials.json.
     // Passing the CredentialManager itself leaves the engagement studio permanently
     // in fallback mode on installs with no provider environment variables.
-    const savedEnv = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
+    // Clear every provider key so a local .env (e.g. GEMINI_API_KEY) cannot satisfy the check.
+    const savedEnv = {};
+    for (const key of Object.keys(process.env)) {
+      if (/_API_KEY$|^(CODEX|CLAUDE|CURSOR)_RUNTIME$/.test(key)) {
+        savedEnv[key] = process.env[key];
+        delete process.env[key];
+      }
+    }
     try {
       const configured = new AITextService({
         aiProvider: { provider: 'openai', apiKey: 'test-key', model: 'gpt-6.1-sol' }
@@ -3826,8 +4001,40 @@ class SystemTest {
         throw new Error('A CredentialManager-shaped argument must not look configured; index.js has to unwrap it');
       }
     } finally {
-      if (savedEnv === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = savedEnv;
+      Object.assign(process.env, savedEnv);
+    }
+  }
+
+  async testDailyAutomationTaskLifecycle() {
+    const scheduler = new DailyAutomation({}, { getAllRows: async () => [] });
+    try {
+      await scheduler.setupScheduledTasks();
+      const tasks = [...scheduler.scheduledTasks.values()];
+      if (tasks.length !== 8 || tasks.some(task => task.getStatus() !== 'stopped')) {
+        throw new Error('Creating daily automation tasks started a schedule before the explicit start phase');
+      }
+      const beforeStart = await scheduler.getAutomationStatus();
+      if (beforeStart.scheduledTasks.some(task => task.running)) {
+        throw new Error('Stopped schedules were reported as running');
+      }
+
+      await scheduler.startScheduledTasks();
+      const started = await scheduler.getAutomationStatus();
+      if (started.scheduledTasks.some(task => !task.running)) {
+        throw new Error('The explicit start phase did not activate every schedule');
+      }
+      const health = await scheduler.performHealthCheck();
+      if (Object.values(health.scheduledTasks).some(running => running !== true)) {
+        throw new Error('Health checks did not use the current node-cron task state');
+      }
+
+      await scheduler.stopAutomation();
+      const stopped = await scheduler.getAutomationStatus();
+      if (stopped.enabled || stopped.scheduledTasks.some(task => task.running)) {
+        throw new Error('Stopping automation left a schedule active');
+      }
+    } finally {
+      for (const task of scheduler.scheduledTasks.values()) await task.destroy();
     }
   }
 

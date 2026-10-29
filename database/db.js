@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 
+const RESEARCH_PROVIDER_DESCRIPTION = 'Research worker (opt-in): disabled, auto, chatgpt, or claude';
+
 class Database {
   constructor() {
     this.dbPath = path.join(__dirname, '..', 'data', 'youtube_automation.db');
@@ -415,6 +417,7 @@ class Database {
         contains_synthetic_media INTEGER DEFAULT 0,
         status TEXT DEFAULT 'not_required',
         summary TEXT NOT NULL DEFAULT '{}',
+        research TEXT NOT NULL DEFAULT '{}',
         reviewed_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -647,13 +650,16 @@ class Database {
     await this.ensureColumns('discoverability_audits', {
       error_code: 'TEXT'
     });
+    await this.ensureColumns('content_provenance', {
+      research: "TEXT NOT NULL DEFAULT '{}'"
+    });
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits']);
+    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits', 'content_provenance']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -679,6 +685,13 @@ class Database {
       ['max_daily_posts', '1', 'Maximum posts per day'],
       ['content_buffer_days', '3', 'Days of content to keep in buffer'],
       ['video_provider', 'slideshow', 'Video provider: slideshow, auto, seedance, minimax_h3, google_omni, kling, or wan'],
+      ['image_provider', 'auto', 'Image provider: auto, none, openai, gemini, fal, or local'],
+      ['research_provider', 'disabled', RESEARCH_PROVIDER_DESCRIPTION],
+      ['research_scheduled_enabled', 'false', 'Enable research for daily runs after episode trials'],
+      ['fal_image_model', 'fal-ai/flux/schnell', 'fal.ai text-to-image model endpoint'],
+      ['local_image_backend', 'automatic1111', 'Local image API: automatic1111 or comfyui'],
+      ['local_image_url', '', 'Base URL of a separately running local image server'],
+      ['comfyui_workflow_path', '', 'Path to a ComfyUI API-format image workflow'],
       ['video_provider_order', 'seedance,minimax_h3,google_omni,kling,wan,slideshow', 'Provider priority used by automatic routing'],
       ['video_generation_mode', 'hybrid', 'Use provider clips within a locally assembled long-form video'],
       ['video_clip_duration', '8', 'Requested duration for each generated provider clip'],
@@ -693,6 +706,13 @@ class Database {
         [key, value, description]
       );
     }
+    // Research briefly defaulted to auto before becoming opt-in. Reset only that
+    // untouched default (identified by its old description) so an explicit auto is kept.
+    await this.executeQuery(
+      `UPDATE settings SET value = 'disabled', description = ?
+       WHERE key = 'research_provider' AND value = 'auto' AND description = ?`,
+      [RESEARCH_PROVIDER_DESCRIPTION, 'Research worker: auto, chatgpt, claude, or disabled']
+    );
 
     await this.executeQuery(
       `INSERT OR IGNORE INTO channel_profiles (
@@ -1403,12 +1423,12 @@ class Database {
   async saveContentProvenance(productionId, provenance = {}) {
     await this.executeQuery(
       `INSERT INTO content_provenance (
-        production_id, sources, claims, contains_synthetic_media, status, summary, reviewed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        production_id, sources, claims, contains_synthetic_media, status, summary, research, reviewed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(production_id) DO UPDATE SET
         sources = excluded.sources, claims = excluded.claims,
         contains_synthetic_media = excluded.contains_synthetic_media,
-        status = excluded.status, summary = excluded.summary,
+        status = excluded.status, summary = excluded.summary, research = excluded.research,
         reviewed_at = excluded.reviewed_at, updated_at = datetime('now')`,
       [
         productionId,
@@ -1417,6 +1437,7 @@ class Database {
         Number(provenance.containsSyntheticMedia === true),
         provenance.status || 'not_required',
         JSON.stringify(provenance.summary || {}),
+        JSON.stringify(provenance.research || {}),
         provenance.reviewedAt || null
       ]
     );
@@ -1431,6 +1452,7 @@ class Database {
       claims: JSON.parse(row.claims || '[]'),
       containsSyntheticMedia: Boolean(row.contains_synthetic_media),
       summary: JSON.parse(row.summary || '{}'),
+      research: JSON.parse(row.research || '{}'),
       reviewedAt: row.reviewed_at
     } : null;
   }
