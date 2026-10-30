@@ -43,7 +43,7 @@ function packResult(data = packData(), retrievals) {
 }
 
 function service(run, options = {}) {
-  return new ResearchService({}, { provider: 'chatgpt', env: {}, worker: run, ...options });
+  return new ResearchService({}, { provider: 'chatgpt', env: {}, worker: run, minClaims: 1, ...options });
 }
 
 async function blocked(promise, code, label = code) {
@@ -136,23 +136,51 @@ test('conflicting dates remain exceptions until reconciled with evidence', async
   assert.equal(pack.contradictions[0].status, 'resolved');
 });
 
-test('worker-declared evidence gaps and an omitted exceptions list both block', async () => {
-  await blocked(service(worker([packResult(packData({ exceptions: [{ message: 'Station locations are unrecorded.' }] }))]), { maxAttempts: 1 })
-    .buildFactPack({ topic: 'x' }), 'evidence_gap');
+test('worker-declared gaps become limitations instead of blocking', async () => {
+  const pack = await service(worker([packResult(packData({ exceptions: [{ message: 'Station locations are unrecorded.' }] }))]))
+    .buildFactPack({ topic: 'x' });
+  assert.deepEqual(pack.limitations, ['Station locations are unrecorded.']);
+  assert.deepEqual(pack.exceptions, []);
   const data = packData();
   delete data.exceptions;
-  await blocked(service(worker([packResult(data)]), { maxAttempts: 1 }).buildFactPack({ topic: 'x' }), 'missing_exceptions');
+  assert.equal((await service(worker([packResult(data)])).buildFactPack({ topic: 'x' })).claims.length, 1);
   await blocked(service(worker([packResult(packData({ claims: [] }))]), { maxAttempts: 1 }).buildFactPack({ topic: 'x' }), 'empty_pack');
 });
 
+test('faulty sources and claims are left out while verified facts are kept', async () => {
+  const copy = source({ id: 's6', url: 'https://archive.example/railway' });
+  const second = source({ id: 's2', url: 'https://museum.example/record', publisher: 'Museum', originUrl: 'https://museum.example/record' });
+  const data = packData({
+    sources: [source(), second, copy],
+    claims: [
+      claim(),
+      claim({ id: 'f2', sourceIds: ['s6'], evidence: [{ sourceId: 's6', passage: 'demonstrated in 1864', location: 'page 4' }] }),
+      claim({ id: 'f3', sourceIds: ['s1', 's6'], evidence: [
+        { sourceId: 's1', passage: 'demonstrated in 1864', location: 'page 4' },
+        { sourceId: 's6', passage: 'demonstrated in 1864', location: 'page 4' }
+      ] }),
+      claim({ id: 'f4', evidence: [{ sourceId: 's1', passage: 'reached 100 mph', location: 'page 4' }] }),
+      claim({ id: 'f5', sourceIds: ['s2'], evidence: [{ sourceId: 's2', passage: 'at Crystal Palace', location: 'page 4' }] })
+    ],
+    exceptions: [{ message: 'The exact cruise speed is not established.' }]
+  });
+  const pack = await service(worker([packResult(data)])).buildFactPack({ topic: 'x' });
+  assert.deepEqual(pack.claims.map(item => item.id), ['f1', 'f3', 'f5']);
+  assert.deepEqual(pack.claims[1].sourceIds, ['s1']);
+  assert.deepEqual(pack.sources.map(item => item.id), ['s1', 's2']);
+  assert.deepEqual(pack.excluded.map(item => item.code), ['duplicate_source', 'missing_evidence', 'unsupported_passage']);
+  assert.deepEqual(pack.limitations, ['The exact cruise speed is not established.']);
+  await blocked(service(worker([packResult(data)]), { maxAttempts: 1, minClaims: 4 }).buildFactPack({ topic: 'x' }), 'thin_evidence');
+});
+
 test('thin evidence moves to the next candidate topic with feedback', async () => {
-  const run = worker([packResult(packData({ exceptions: [{ message: 'Too little evidence.' }] })), packResult(packData({ topic: 'Atmospheric railway' }))]);
+  const run = worker([packResult(packData({ claims: [claim({ atomic: false })] })), packResult(packData({ topic: 'Atmospheric railway' }))]);
   const pack = await service(run).buildFactPack({ topic: 'Thin topic', candidateTopics: [{ topic: 'Atmospheric railway' }] });
   assert.equal(pack.attempts, 2);
   assert.equal(pack.topic, 'Atmospheric railway');
   assert.match(run.prompts[0], /"Thin topic"/);
   assert.match(run.prompts[1], /"Atmospheric railway"/);
-  assert.match(run.prompts[1], /Too little evidence/);
+  assert.match(run.prompts[1], /must be split into atomic claims/);
 });
 
 function production(overrides = {}) {

@@ -83,6 +83,7 @@ class ResearchService {
     this.maxAttempts = bounded(options.maxAttempts ?? env.RESEARCH_MAX_ATTEMPTS, 2, 1, 4);
     this.maxRepairs = options.maxRepairs === 0 || env.RESEARCH_MAX_REPAIRS === '0' ? 0 : bounded(options.maxRepairs ?? env.RESEARCH_MAX_REPAIRS, 1, 1, 3);
     this.concurrency = bounded(options.concurrency ?? env.RESEARCH_CONCURRENCY, 1, 1, 3);
+    this.minClaims = bounded(options.minClaims ?? env.RESEARCH_MIN_CLAIMS, 5, 1, 50);
     this.worker = options.worker || generateSubscriptionResearch;
   }
 
@@ -107,12 +108,15 @@ class ResearchService {
   factPackPrompt(strategy, topic, feedback) {
     return `${EDITORIAL_RULES}\nResearch an evidence-backed short historical documentary about ${JSON.stringify(topic)}. Channel brief: ${JSON.stringify({ audience: strategy.targetAudience, angle: strategy.angle, constraints: strategy.channelConstraints })}.\nReturn ONLY JSON with this structure:
 {"topic":"selected topic","summary":"what the evidence establishes and its limits","sources":[{"id":"s1","url":"exact opened URL","title":"title","publisher":"publisher","publishedAt":null,"originUrl":"original evidence chain URL, including citations followed","sourceType":"official|article|dataset|other","evidenceType":"page|document","passage":"short verbatim supporting passage, not paraphrase","location":"page/section","independenceKnown":true}],"claims":[{"id":"f1","text":"one narrowly worded atomic factual claim","riskLevel":"standard|high","sourceIds":["s1"],"evidence":[{"sourceId":"s1","passage":"exact excerpt within that source passage","location":"page/section"}],"atomic":true,"uncertainty":"explicit qualification or empty string"}],"contradictions":[{"claimIds":["f1"],"description":"conflicting event dates or accounts","status":"unresolved|resolved","resolution":"evidenced reconciliation or explicit exclusion"}],"exceptions":[{"message":"remaining material evidence gap","proposedResolution":"specific proposed action"}]}
-Each source must have been fetched in this run, with an exact excerpt and page or section. Provide multiple source entries for distinct pages, retain their shared original originUrl when copied. Set independenceKnown=false if original provenance cannot be established. Every part of each claim must be supported by its excerpts; split compound claims. High-risk claims need at least two independently established original evidence chains. A usable pack needs at least one well-supported claim, no material unresolved contradictions. If evidence is thin, return explicit exceptions instead of inventing evidence. Previous attempt issues: ${JSON.stringify(feedback || [])}`;
+Each source must have been fetched in this run, with an exact excerpt and page or section. Provide multiple source entries for distinct pages, retain their shared original originUrl when copied. Set independenceKnown=false if original provenance cannot be established. Every part of each claim must be supported by its excerpts; split compound claims. High-risk claims need at least two independently established original evidence chains. Aim for 12 to 20 atomic claims so the script has enough material; a usable pack needs at least ${this.minClaims}. Leave out anything you cannot support instead of listing it as a claim. If evidence is thin, return explicit exceptions instead of inventing evidence. Previous attempt issues: ${JSON.stringify(feedback || [])}`;
   }
 
+  // Faulty evidence is left out rather than failing the topic: a bad source drops its
+  // evidence, a bad claim is excluded, and the worker's own gaps become limitations the
+  // script must respect. Research blocks only when too few verified facts remain.
   normalizeFactPack(result, topic) {
     const raw = result.data;
-    const exceptions = [];
+    const excluded = [];
     if (!Array.isArray(raw.sources) || !raw.sources.length || !Array.isArray(raw.claims) || !raw.claims.length) {
       block('Research returned an incomplete fact pack.', [problem('empty_pack', 'Sources and narrowly supported factual claims are required.')]);
     }
@@ -120,21 +124,24 @@ Each source must have been fetched in this run, with an exact excerpt and page o
     const fetched = new Map(result.retrievals.filter(item => item.status === 'completed' && ['fetch', 'open', 'document'].includes(item.type)).map(item => [url(item.url), item]));
     const sourceIds = new Set();
     const sourceUrls = new Set();
-    const sources = raw.sources.map((item, index) => {
+    const sources = [];
+    raw.sources.forEach((item, index) => {
       const id = text(item.id, 100) || `s${index + 1}`;
       const sourceUrl = url(item.url);
       const retrieval = fetched.get(sourceUrl);
       const passage = text(item.passage, 3000);
       const location = text(item.location, 300);
       const originUrl = url(item.originUrl);
-      if (!sourceUrl || !retrieval) exceptions.push(problem('unretrieved_source', `Source ${id} was not opened in the recorded retrieval events.`, { sourceId: id }));
-      if (sourceIds.has(id) || sourceUrls.has(sourceUrl)) exceptions.push(problem('duplicate_source', `Source ${id} duplicates a source ID or URL.`));
-      if (!passage || !location || !text(item.publisher, 200)) exceptions.push(problem('missing_passage', `Source ${id} needs publisher, exact passage and page or section.`, { sourceId: id }));
       const captured = text(retrieval?.content, 1000000);
       const passageVerified = captured ? normalized(captured).includes(normalized(passage)) : false;
-      if (captured && !passageVerified) exceptions.push(problem('passage_mismatch', `Source ${id}'s excerpt is absent from its captured page content.`, { sourceId: id }));
+      const fault = !sourceUrl || !retrieval ? problem('unretrieved_source', `Source ${id} was not opened in the recorded retrieval events.`, { sourceId: id })
+        : sourceIds.has(id) || sourceUrls.has(sourceUrl) ? problem('duplicate_source', `Source ${id} duplicates a source ID or URL.`, { sourceId: id })
+          : !passage || !location || !text(item.publisher, 200) ? problem('missing_passage', `Source ${id} needs publisher, exact passage and page or section.`, { sourceId: id })
+            : captured && !passageVerified ? problem('passage_mismatch', `Source ${id}'s excerpt is absent from its captured page content.`, { sourceId: id })
+              : null;
+      if (fault) { excluded.push(fault); return; }
       sourceIds.add(id); sourceUrls.add(sourceUrl);
-      return {
+      sources.push({
         id, url: sourceUrl, title: text(item.title, 300) || sourceUrl, publisher: text(item.publisher, 200),
         publishedAt: item.publishedAt && !Number.isNaN(Date.parse(item.publishedAt)) ? new Date(item.publishedAt).toISOString() : null,
         accessedAt: retrieval?.completedAt || new Date().toISOString(),
@@ -144,36 +151,50 @@ Each source must have been fetched in this run, with an exact excerpt and page o
         independenceKnown: Boolean(originUrl && item.independenceKnown === true), passage, location,
         evidenceHash: hash({ url: sourceUrl, passage, location }), status: 'verified',
         machineChecked: true, passageVerified, retrievalId: retrieval?.id || null
-      };
-    });
-    const claimIds = new Set();
-    const claims = raw.claims.map((item, index) => {
-      const id = text(item.id, 100) || `f${index + 1}`;
-      if (claimIds.has(id)) exceptions.push(problem('duplicate_claim', `Duplicate fact ID ${id}.`));
-      claimIds.add(id);
-      if (item.atomic !== true) exceptions.push(problem('compound_claim', `Fact ${id} must be split into atomic claims.`, { claimId: id }));
-      if (!text(item.text, 2000)) exceptions.push(problem('empty_claim', `Fact ${id} has no claim text.`));
-      const ids = [...new Set(Array.isArray(item.sourceIds) ? item.sourceIds.map(String) : [])];
-      const evidence = this.normalizeEvidence(item.evidence, sources, exceptions, id);
-      if (!ids.length || ids.some(sourceId => !sourceIds.has(sourceId)) || ids.some(sourceId => !evidence.some(entry => entry.sourceId === sourceId))) {
-        exceptions.push(problem('missing_evidence', `Fact ${id} needs exact evidence for every linked source.`, { claimId: id }));
-      }
-      const riskLevel = item.riskLevel === 'high' ? 'high' : 'standard';
-      if (riskLevel === 'high' && this.independentOrigins(ids, sources).size < 2) exceptions.push(problem('corroboration', `High-risk fact ${id} lacks two independent evidence origins.`, { claimId: id }));
-      return { id, text: text(item.text, 2000), riskLevel, sourceIds: ids, evidence, atomic: item.atomic === true, uncertainty: text(item.uncertainty), status: 'supported' };
+      });
     });
     const contradictions = Array.isArray(raw.contradictions) ? raw.contradictions.map(item => ({
       description: text(item.description), claimIds: Array.isArray(item.claimIds) ? item.claimIds.map(String) : [],
       status: item.status === 'resolved' && text(item.resolution) ? 'resolved' : 'unresolved', resolution: text(item.resolution)
     })) : [];
-    contradictions.filter(item => item.status !== 'resolved').forEach(item => exceptions.push(problem('contradiction', item.description || 'Conflicting accounts remain unresolved.')));
-    if (!Array.isArray(raw.exceptions)) exceptions.push(problem('missing_exceptions', 'The worker did not report whether evidence exceptions remain.'));
-    else raw.exceptions.forEach(item => exceptions.push(problem('evidence_gap', text(item.message || item), { proposedResolution: text(item.proposedResolution) || 'Retrieve missing evidence or exclude this detail.' })));
-    const pack = { version: 1, topic: text(raw.topic, 500) || topic, summary: text(raw.summary, 3000), sources, claims, contradictions, exceptions,
+    const contested = new Set(contradictions.filter(item => item.status !== 'resolved').flatMap(item => item.claimIds));
+    const limitations = Array.isArray(raw.exceptions) ? raw.exceptions.map(item => text(item?.message || item, 1000)).filter(Boolean) : [];
+    contradictions.filter(item => item.status !== 'resolved' && !item.claimIds.length)
+      .forEach(item => limitations.push(item.description || 'Some accounts conflict; do not state the contested details.'));
+    const claimIds = new Set();
+    const claims = [];
+    raw.claims.forEach((item, index) => {
+      const id = text(item.id, 100) || `f${index + 1}`;
+      // Evidence from a source that was left out no longer counts, but the claim can stand on the rest.
+      const listed = [...new Set(Array.isArray(item.sourceIds) ? item.sourceIds.map(String) : [])];
+      const ids = listed.filter(sourceId => sourceIds.has(sourceId));
+      const faults = [];
+      const evidence = this.normalizeEvidence((Array.isArray(item.evidence) ? item.evidence : [])
+        .filter(entry => sourceIds.has(String(entry?.sourceId)) || !listed.includes(String(entry?.sourceId))), sources, faults, id);
+      const riskLevel = item.riskLevel === 'high' ? 'high' : 'standard';
+      const fault = claimIds.has(id) ? problem('duplicate_claim', `Duplicate fact ID ${id}.`, { claimId: id })
+        : !text(item.text, 2000) ? problem('empty_claim', `Fact ${id} has no claim text.`, { claimId: id })
+          : item.atomic !== true ? problem('compound_claim', `Fact ${id} must be split into atomic claims.`, { claimId: id })
+            : contested.has(id) ? problem('contradiction', `Fact ${id} is contested by conflicting accounts.`, { claimId: id })
+              : faults[0] || (!ids.length || ids.some(sourceId => !evidence.some(entry => entry.sourceId === sourceId))
+                ? problem('missing_evidence', `Fact ${id} needs exact evidence for every linked source.`, { claimId: id })
+                : riskLevel === 'high' && this.independentOrigins(ids, sources).size < 2
+                  ? problem('corroboration', `High-risk fact ${id} lacks two independent evidence origins.`, { claimId: id }) : null);
+      if (fault) { excluded.push(fault); return; }
+      claimIds.add(id);
+      claims.push({ id, text: text(item.text, 2000), riskLevel, sourceIds: ids, evidence, atomic: true, uncertainty: text(item.uncertainty), status: 'supported' });
+    });
+    if (claims.length < this.minClaims) {
+      const thin = problem('thin_evidence', `Only ${claims.length} of ${raw.claims.length} facts were verified; at least ${this.minClaims} are needed.`);
+      block(`Research needs attention: ${thin.message}`, [thin, ...excluded, ...limitations.map(message => problem('evidence_gap', message))]);
+    }
+    const usedSources = new Set(claims.flatMap(claim => claim.sourceIds));
+    const pack = { version: 1, topic: text(raw.topic, 500) || topic, summary: text(raw.summary, 3000),
+      sources: sources.filter(item => usedSources.has(item.id)), claims,
+      contradictions: contradictions.filter(item => item.status === 'resolved'), exceptions: [], limitations, excluded,
       checkedBy: { provider: result.provider || this.provider, model: result.model || this.model }, researchedAt: new Date().toISOString(),
       retrievals: result.retrievals.map(({ id, url: sourceUrl, type, status, tool, completedAt }) => ({ id, url: sourceUrl, type, status, tool, completedAt })) };
     pack.evidenceFingerprint = evidenceFingerprint(pack);
-    if (exceptions.length) block(`Research needs attention: ${exceptions[0].message}`, exceptions, { factPack: pack });
     return pack;
   }
 
