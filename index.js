@@ -194,6 +194,8 @@ class YouTubeAutomationAgent {
       hasGemini
     );
     const hasFFmpeg = await checkFFmpeg();
+    let hasChromium = false;
+    try { hasChromium = require('fs').existsSync(require('playwright').chromium.executablePath()); } catch (_error) { /* not installed */ }
     const hasUpload = Boolean(creds.youtube && this.credentials.tokens?.youtube);
 
     const capabilities = [
@@ -201,6 +203,7 @@ class YouTubeAutomationAgent {
       { name: 'Image generation', ok: hasImages, hint: 'choose fal.ai, a local image server, OpenAI, or Gemini in Channel setup' },
       { name: 'Voice narration (TTS)', ok: hasTTS, hint: 'configure OpenAI, Gemini, ElevenLabs, or Azure Speech — otherwise videos are silent' },
       { name: 'Video assembly (FFmpeg)', ok: hasFFmpeg, hint: ffmpegInstallHint() },
+      { name: 'Slideshow renderer (Chromium)', ok: hasChromium, hint: 'run: npx playwright install chromium — without it every video is a placeholder' },
       { name: 'YouTube upload', ok: hasUpload, hint: 'run: npm run credentials:setup' }
     ];
 
@@ -215,6 +218,9 @@ class YouTubeAutomationAgent {
 
     if (!hasFFmpeg) {
       this.logger.warn('FFmpeg is missing: no .mp4 files can be produced until it is installed.');
+    }
+    if (!hasChromium) {
+      this.logger.warn('Chromium is missing: slideshow videos cannot be rendered until you run "npx playwright install chromium".');
     }
     console.log('');
     return { hasText, hasImages, hasTTS, hasFFmpeg, hasUpload };
@@ -1849,7 +1855,7 @@ class YouTubeAutomationAgent {
     const status = quality.passed ? 'needs_review' : 'needs_attention';
     return this.db.saveContentReview(productionId, {
       status,
-      editorData: { ...(bundle.editorData || {}), rightsConfirmed: false },
+      editorData: bundle.editorData || {},
       qualityChecks: quality.checks,
       reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
       reviewedAt: null

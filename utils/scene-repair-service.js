@@ -155,6 +155,7 @@ class SceneRepairService {
       }
       return scenes;
     }
+    this.fitScenesToNarration(scenes, await this.getMediaDuration(audioPath).catch(() => null));
     const directory = path.join(this.dataRoot, 'audio', 'scenes', production.id);
     await fs.mkdir(directory, { recursive: true });
     let start = 0;
@@ -179,6 +180,38 @@ class SceneRepairService {
       start += Number(scene.duration);
     }
     return scenes;
+  }
+
+  // Scene timings start from the script's estimated length, which can be far from the
+  // real narration. Scale them to the measured audio so no scene is cut past its end.
+  fitScenesToNarration(scenes, narrationSeconds) {
+    const planned = scenes.reduce((sum, scene) => sum + Number(scene.duration), 0);
+    if (!(narrationSeconds > 0) || !planned || Math.abs(planned - narrationSeconds) < 1) return scenes;
+    for (const scene of scenes) {
+      scene.duration = Math.max(2, Number(((Number(scene.duration) / planned) * narrationSeconds).toFixed(2)));
+    }
+    return scenes;
+  }
+
+  // Productions made before the timings were fitted have empty narration segments past
+  // the end of the audio. Re-split them from the full narration when no scene was re-voiced.
+  async repairNarrationSegments(bundle, scenes) {
+    const fullAudio = bundle.assets?.audio?.path;
+    const split = scenes.every(scene => scene.narrationStatus === 'current' && /_r1\.mp3$/.test(scene.audioPath || ''));
+    if (!split || !await this.videoGenerator.isUsableAudioFile(fullAudio)) return scenes;
+    const narrationSeconds = await this.getMediaDuration(fullAudio).catch(() => null);
+    const planned = scenes.reduce((sum, scene) => sum + Number(scene.duration), 0);
+    if (!(narrationSeconds > 0) || planned - narrationSeconds < 1) return scenes;
+    this.logger.warn(`Scene timings (${planned.toFixed(1)}s) overran the narration (${narrationSeconds.toFixed(1)}s); re-splitting it`);
+    await this.initializeAudioSegments(bundle, scenes);
+    const repaired = [];
+    for (const scene of scenes) {
+      repaired.push(await this.db.updateProductionScene(bundle.id, scene.id, {
+        duration: scene.duration, audioPath: scene.audioPath,
+        narrationStatus: scene.narrationStatus, narrationError: scene.narrationError
+      }));
+    }
+    return repaired;
   }
 
   async getEditableBundle(productionId) {
@@ -507,7 +540,7 @@ class SceneRepairService {
 
   async rebuild(productionId) {
     const bundle = await this.getEditableBundle(productionId);
-    const scenes = await this.db.listProductionScenes(productionId);
+    const scenes = await this.repairNarrationSegments(bundle, await this.db.listProductionScenes(productionId));
     if (!scenes.length) throw this.error('No scene manifest is available', 409);
     const missing = [];
     const fullNarrationReady = await this.videoGenerator.isUsableAudioFile(bundle.assets?.audio?.path);

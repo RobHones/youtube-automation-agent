@@ -50,8 +50,15 @@ async function api(url, options = {}, retry = true) {
   return data;
 }
 
+// A modal dialog sits in the top layer, so a toast outside it is hidden behind it.
+function placeToast(toast) {
+  const host = document.querySelector('dialog[open]') || document.body;
+  if (toast.parentElement !== host) host.appendChild(toast);
+}
+
 function showToast(message, type = 'success') {
   const toast = $('#toast');
+  placeToast(toast);
   toast.textContent = message;
   toast.className = `toast ${type}`;
   clearTimeout(ui.toastTimer);
@@ -1024,8 +1031,10 @@ async function openContent(productionId) {
     const experiment = data.packagingExperiment;
     const selectedTitleVariant = Number(data.selectedTitleVariant || 0);
     const selectedThumbnailVariant = Number(data.selectedThumbnailVariant || 0);
+    const blockers = (item.qualityChecks || []).filter(check => !check.passed && check.blocking !== false);
     $('#content-detail').innerHTML = `
       <div class="dialog-heading"><div><p class="eyebrow">CONTENT REVIEW</p><h2>${escapeHTML(title)}</h2><div class="meta-line">${statusChip(item.schedule?.status || item.review_status || item.status)} · Quality ${qualityScore(item.qualityChecks)}%</div></div><button type="button" class="close-button" data-close>×</button></div>
+      ${blockers.length ? `<div class="callout blocking-callout"><strong>This video can't be approved yet</strong>${blockers.map(check => `<p>× ${escapeHTML(check.message)}</p>`).join('')}${blockers.some(check => check.id === 'video') && (item.scenes || []).length && canReview ? `<button type="button" class="button primary small" data-rebuild-scenes="${escapeHTML(item.id)}">Rebuild final video</button>` : ''}</div>` : ''}
       <form id="content-review-form" class="editor content-review-editor">
         <div class="content-layout">
           <div>
@@ -1053,7 +1062,7 @@ async function openContent(productionId) {
             <label><span>Privacy</span><select name="privacyStatus"><option value="private" ${data.privacyStatus === 'private' ? 'selected' : ''}>Private</option><option value="unlisted" ${data.privacyStatus === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="public" ${data.privacyStatus === 'public' ? 'selected' : ''}>Public</option></select></label>
           </div>
           <div class="settings-row">
-            <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Media rights confirmed</label>
+            <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${(data.rightsConfirmed ?? !(item.scenes || []).some(scene => scene.assetOrigin === 'uploaded')) ? 'checked' : ''}><span></span> Media rights confirmed</label>
             <label class="toggle"><input id="contains-synthetic-media" type="checkbox" ${item.provenance?.containsSyntheticMedia ? 'checked' : ''} ${canReview ? '' : 'disabled'}><span></span> Contains realistic AI-generated media (YouTube disclosure)</label>
           </div>
           ${item.schedule && !['published', 'uploading', 'uploaded', 'reconciliation_required'].includes(item.schedule.status) ? `<div class="form-actions"><button type="button" class="button secondary" data-reschedule-content="${escapeHTML(item.id)}">Reschedule</button><button type="button" class="button primary" data-publish-now-content="${escapeHTML(item.id)}">Publish now</button><button type="button" class="button danger" data-delete-schedule="${escapeHTML(item.id)}">Delete schedule</button></div>` : ''}

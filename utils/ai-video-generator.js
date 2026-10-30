@@ -542,7 +542,13 @@ class AIVideoGenerator {
     }
 
     const { chromium } = require('playwright');
-    const browser = await chromium.launch();
+    const browser = await chromium.launch().catch(error => {
+      // After a Playwright upgrade its matching Chromium build must be downloaded again.
+      if (/Executable doesn't exist|playwright install/i.test(error.message)) {
+        throw new Error('The slideshow renderer (Chromium) is not installed. Run "npx playwright install chromium" and restart');
+      }
+      throw error;
+    });
     const slidesDir = path.join(path.dirname(outputPath), 'slides');
 
     try {

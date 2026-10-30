@@ -613,7 +613,7 @@ class ProductionManagementAgent {
 
       // The generator falls back to a placeholder .info file when it cannot render
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
-        return await this.simulateVideoAssembly(productionData);
+        return await this.simulateVideoAssembly(productionData, this.aiVideoGenerator.lastVideoResult?.fallbackReason || null);
       }
 
       // Get file stats
@@ -638,7 +638,7 @@ class ProductionManagementAgent {
     } catch (error) {
       this.logger.error('AI video assembly failed:', error);
       // Fallback to simulation
-      return await this.simulateVideoAssembly(productionData);
+      return await this.simulateVideoAssembly(productionData, error.message);
     }
   }
 

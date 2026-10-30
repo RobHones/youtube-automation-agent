@@ -34,7 +34,7 @@ class OperatorService {
           : thumbnail?.path ? 'Thumbnail asset is present' : 'Thumbnail asset is missing', false),
       this.check('video', Boolean(finalVideo?.path && !finalVideo?.simulated),
         finalVideo?.simulated
-          ? 'Only a simulated video was produced'
+          ? `The final MP4 was not made${finalVideo.blockedReason ? `: ${finalVideo.blockedReason}` : ''}. Fix the cause, then use Rebuild final video`
           : finalVideo?.path ? 'Final MP4 is ready' : 'Final MP4 is missing')
     ];
 
