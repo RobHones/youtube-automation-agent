@@ -2,13 +2,23 @@
 
 ## Unreleased
 
-- Refreshed provider defaults and selectors: OpenAI GPT-6.1 Sol (with GPT-6 Astra and Luna), Gemini 3.8 Flash (with Gemini 4 Argon), MiMo V2.6, GLM-5.3 Flash, Claude Fable 5.1, and the current OpenRouter catalog
+- Added opt-in automatic documentary research through a ChatGPT or Claude subscription (off by default; enable it in Channel setup or with `RESEARCH_PROVIDER`). A web-only worker builds a fact pack with exact source passages before writing, a separate pass audits every audience-facing text unit before media generation, and failed audits trigger bounded rewrites. Approval and upload stay blocked when the audit is missing, incomplete or stale. Scheduled research requires an explicit opt-in after trial episodes
+- Fixed videos ending up as placeholders that could never be approved. After the Playwright upgrade its Chromium build was never downloaded, so every slideshow render failed silently; `npm install` now fetches it, the startup check flags it, and the failed check names the real cause. Scene timings now follow the real narration length instead of the script's estimate, so **Rebuild final video** no longer fails on empty narration segments, and older productions are repaired when rebuilt
+- Review Studio now shows why a video can't be approved, with a **Rebuild final video** button, and error messages appear inside the review window instead of behind it. Media rights are pre-confirmed when every asset was generated rather than uploaded
+- Research no longer fails a whole topic over one bad source or claim. Duplicate or unverifiable sources and unsupported, compound or contested claims are left out, worker-reported gaps become limitations the script must respect, and research fails only when fewer than `RESEARCH_MIN_CLAIMS` (default 5) verified facts remain
+- Removed manual fact review. Videos made without research no longer wait for anyone to add sources or approve claims, and approval no longer needs a "Facts reviewed" checkbox. Researched episodes rely on the machine audit alone: Review Studio shows its sources and claims as read-only, and **Run research audit** now works. Existing productions held only for manual evidence review are released on startup. Researched episodes now follow the `approval_required` setting instead of always waiting for approval
+- Researched scripts and metadata no longer fall back to templates, and the introduction template no longer invents first-person credibility statements
+- ChatGPT setup in the walkthrough now reuses an existing sign-in or starts the real browser sign-in through Codex, verifies it, and tests generation before saving; it no longer just opens the authentication documentation
+- Added Cursor, Claude, and ChatGPT subscription text providers. Cursor uses `@cursor/sdk` with an explicit local or cloud runtime. Claude uses `claude auth login` and local `claude -p`. ChatGPT uses `codex login` and local `codex exec`. Narration and images still use their existing providers
+- Subscription requests now verify Claude/Codex login methods, isolate concurrent outputs, clean temporary files, handle early CLI exits, and cancel or terminate timed-out runs
+- Switching to Gemini or OpenAI now replaces the previous text-provider selection while retaining media credentials; legacy saved OpenAI text credentials are recognized
+- Updated dependencies to resolve reported security advisories and removed unused Google local-auth. The app now requires Node.js 22.13+. Migrated scheduler lifecycle/status handling to node-cron 4, and CI checks Node.js 22 and 24 with Chromium installed
 - Added DeepSeek (`DEEPSEEK_API_KEY`) and MiniMax M3 text (`MINIMAX_TEXT_API_KEY`) as text providers; the existing `MINIMAX_API_KEY` still only enables MiniMax H3 video
 - Moved Gemini Omni video to `gemini-omni-1.1-flash` and Gemini narration to `gemini-3.8-flash-tts` ahead of Google's shutdown of the preview models
 - Gemini 4 models no longer receive the ignored `temperature` parameter
 - Fixed slideshow videos showing a hard-coded "Ethereal Dreamscript" subtitle, a "New content daily at 2:00 PM" end card, and "Content coming soon..." on every chapter; chapter slides now show the script's lines, and generated images are shown at full strength under a light scrim instead of 30% opacity
 - When AI thumbnail generation falls back to a placeholder, productions now keep the designer's real thumbnail; a remaining placeholder no longer passes the thumbnail check or appears as a broken image in Review Studio
-- Upgraded sharp to 0.34 so its WebAssembly build loads on platforms without a native binary, such as Android/Termux (requires Node.js 18.17+)
+- Upgraded sharp to 0.35; its WebAssembly build supports platforms without a native binary, such as Android/Termux
 - Corrected the README's provider list: there is no generic OpenAI-compatible endpoint or Ollama setting, and Claude is available through OpenRouter
 
 ## v2.11.0 — 2026-10-13

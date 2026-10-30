@@ -6,7 +6,7 @@ It researches topics, writes scripts, generates narration and visuals, assembles
 
 [![CI](https://github.com/darkzOGx/youtube-automation-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/darkzOGx/youtube-automation-agent/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node.js 18.17+](https://img.shields.io/badge/node-18.17%2B-43853d.svg)](package.json)
+[![Node.js 22.13+](https://img.shields.io/badge/node-22.13%2B-43853d.svg)](package.json)
 [![Releases](https://img.shields.io/github/v/release/darkzOGx/youtube-automation-agent?label=release)](https://github.com/darkzOGx/youtube-automation-agent/releases)
 
 ![The operator console: videos waiting for your decision, a generation job in progress, and the publishing calendar](assets/screenshots/overview.png)
@@ -23,15 +23,15 @@ It researches topics, writes scripts, generates narration and visuals, assembles
 - **Real output only.** Simulated or placeholder media is clearly marked and can never be approved or uploaded.
 - **Self-hosted.** Your keys, media, and channel data stay on your machine.
 - **Learns from evidence, with your sign-off.** Lessons from analytics, retention curves, and comments shape future videos only after you approve them.
-- **Your choice of providers.** Eight text providers or OpenRouter, five AI video providers, or free local slideshow rendering.
+- **Your choice of providers.** API-key text providers, or Cursor, Claude, and ChatGPT through the subscriptions you already pay for. Five AI video providers, or free local slideshow rendering.
 
 ## Quick start
 
 You need:
 
-- Node.js 18.17 or newer
+- Node.js 22.13 or newer
 - A Google account and YouTube Data API credentials ([setup steps](#youtube-credentials))
-- An API key for at least one [text provider](docs/providers.md#text). Gemini has free tiers for text and narration.
+- A [text provider](docs/providers.md): a supported subscription login or an API key. Gemini has free tiers for text and narration.
 
 ```bash
 git clone https://github.com/darkzOGx/youtube-automation-agent.git
@@ -85,7 +85,7 @@ Each item links to its walkthrough in the [feature guide](docs/features.md).
 **Review**
 - **Content review:** quality checks, metadata editing, approval, and scheduling for each video.
 - [Scene Repair Studio](docs/features.md#scene-repair-studio-and-narration): edit, reorder, lock, replace, or regenerate a single scene, then rebuild the video.
-- [Evidence desk](docs/features.md#evidence-desk): link each factual claim in the script to a verified source before approval.
+- [Evidence desk](docs/features.md#evidence-desk): no manual fact review; researched episodes are checked by a machine audit instead.
 - [Discoverability preflight](docs/features.md#discoverability-preflight): advisory search and AI-answer checks from a bundled DarkzSEO audit.
 
 **Learn**
@@ -98,7 +98,7 @@ Each item links to its walkthrough in the [feature guide](docs/features.md).
 
 ## AI providers
 
-One key gets you started. Pick a text provider in the walkthrough: Gemini, OpenAI, OpenRouter (400+ models, including Claude), Kimi, MiMo, GLM, DeepSeek, or MiniMax. Gemini has free tiers for text and narration.
+One text provider gets you started. Use a Cursor, Claude, or ChatGPT subscription (see the [providers guide](docs/providers.md)), or pick an API key: Gemini, OpenAI, OpenRouter (400+ models, including Claude), Kimi, MiMo, GLM, DeepSeek, or MiniMax. Gemini has free tiers for text and narration. Subscription text covers scripts, strategy, and SEO only.
 
 - **Narration** comes from ElevenLabs, OpenAI, or Gemini, in that order of preference. A video without working narration can't be approved.
 - **Images** come from OpenAI or Gemini, each falling back to the other.

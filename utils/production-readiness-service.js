@@ -146,15 +146,18 @@ class ProductionReadinessService {
 
   async probeImage(tempDir, includePaidMedia) {
     if (this.probes.image) return this.probes.image({ tempDir, includePaidMedia });
-    const generator = new AIVideoGenerator(this.credentialManager.credentials || {});
-    if (!generator.openai && !generator.gemini) {
-      return { status: 'warning', message: 'No AI image provider is configured; gradient visuals will be used.', remediation: 'Configure OpenAI or Gemini image access if generated visuals are required.' };
+    const generator = new AIVideoGenerator(this.credentialManager.credentials || {}, { db: this.db });
+    const selected = await generator.imageService.selected();
+    if (!selected.length) {
+      const settings = await generator.imageService.settings();
+      if (!['auto', 'none'].includes(settings.provider)) throw new Error(`${settings.provider} is selected but is not configured`);
+      return { status: 'warning', message: 'No image generator is selected/configured; gradient visuals will be used.', remediation: 'Choose fal.ai, a local image server, OpenAI, or Gemini in Channel setup.' };
     }
-    if (!includePaidMedia) {
+    if (!includePaidMedia && !selected.some(provider => !provider.paid)) {
       return { status: 'skipped', message: 'Provider is configured; the paid live image probe was not requested.', remediation: 'Enable “Include paid image probe” on the next readiness run to verify image generation.' };
     }
     const outputPath = path.join(tempDir, 'readiness-image.png');
-    await generator.generateImage('Simple red circle centered on a plain dark background, no text', outputPath);
+    await generator.generateImage('Simple red circle centered on a plain dark background, no text', outputPath, { allowPaid: includePaidMedia });
     const stats = await fs.stat(outputPath);
     if (stats.size < 100) throw new Error('Image provider returned an empty or invalid asset');
     return { message: 'Image provider created a real test asset.', details: { bytes: stats.size } };
@@ -281,7 +284,7 @@ class ProductionReadinessService {
   remediationFor(id) {
     const messages = {
       text_provider: 'Run npm run walkthrough, verify the selected model, and confirm provider credits or quota.',
-      image_provider: 'Verify paid image access or rely on the built-in gradient visual fallback.',
+      image_provider: 'Check the selected image provider in Channel setup: hosted providers need credits; local mode needs a running image server and model. Gradient fallback is also available.',
       video_provider: 'Configure the selected provider credentials, choose local slideshow, or rerun with the paid video probe enabled.',
       voice_narration: 'Configure OpenAI, Gemini TTS, ElevenLabs with a voice ID, or Azure Speech, then rerun.',
       video_assembly: 'Run npm install to restore ffmpeg-static, or configure FFMPEG_PATH to a working binary.',

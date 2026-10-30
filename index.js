@@ -21,11 +21,14 @@ const { AnonymousTelemetry } = require('./utils/anonymous-telemetry');
 const { ProductionReadinessService } = require('./utils/production-readiness-service');
 const { GenerationRecoveryService, GENERATION_STAGES } = require('./utils/generation-recovery-service');
 const { ProvenanceService } = require('./utils/provenance-service');
+const { ResearchService } = require('./utils/research-service');
+const { auditIsCurrent } = require('./utils/research-contract');
 const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
 const { AudienceEngagementService } = require('./utils/audience-engagement-service');
 const { GrowthExperimentService } = require('./utils/growth-experiment-service');
 const { AITextService } = require('./utils/ai-text-service');
+const { ImageGenerationService, IMAGE_PROVIDERS, LOCAL_BACKENDS, httpUrl } = require('./utils/image-generation-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
@@ -50,6 +53,7 @@ class YouTubeAutomationAgent {
     this.readiness = null;
     this.recovery = null;
     this.provenance = null;
+    this.research = null;
     this.scenes = null;
     this.shorts = null;
     this.engagement = null;
@@ -182,7 +186,7 @@ class YouTubeAutomationAgent {
 
     const hasText = this.credentials.hasAITextProvider();
     const hasGemini = Boolean(creds.gemini?.apiKey || process.env.GEMINI_API_KEY);
-    const hasImages = Boolean(creds.openai?.apiKey || process.env.OPENAI_API_KEY || hasGemini);
+    const hasImages = await new ImageGenerationService(creds, { db: this.db }).isAvailable();
     const hasTTS = Boolean(
       creds.openai?.apiKey || process.env.OPENAI_API_KEY ||
       creds.elevenLabs?.apiKey || process.env.ELEVENLABS_API_KEY ||
@@ -190,13 +194,16 @@ class YouTubeAutomationAgent {
       hasGemini
     );
     const hasFFmpeg = await checkFFmpeg();
+    let hasChromium = false;
+    try { hasChromium = require('fs').existsSync(require('playwright').chromium.executablePath()); } catch (_error) { /* not installed */ }
     const hasUpload = Boolean(creds.youtube && this.credentials.tokens?.youtube);
 
     const capabilities = [
       { name: 'Script & strategy generation', ok: hasText, hint: 'configure an AI provider (npm run credentials:setup)' },
-      { name: 'Image generation (visuals/thumbnails)', ok: hasImages, hint: 'requires an OpenAI or Gemini API key — otherwise gradient slides are used' },
+      { name: 'Image generation', ok: hasImages, hint: 'choose fal.ai, a local image server, OpenAI, or Gemini in Channel setup' },
       { name: 'Voice narration (TTS)', ok: hasTTS, hint: 'configure OpenAI, Gemini, ElevenLabs, or Azure Speech — otherwise videos are silent' },
       { name: 'Video assembly (FFmpeg)', ok: hasFFmpeg, hint: ffmpegInstallHint() },
+      { name: 'Slideshow renderer (Chromium)', ok: hasChromium, hint: 'run: npx playwright install chromium — without it every video is a placeholder' },
       { name: 'YouTube upload', ok: hasUpload, hint: 'run: npm run credentials:setup' }
     ];
 
@@ -211,6 +218,9 @@ class YouTubeAutomationAgent {
 
     if (!hasFFmpeg) {
       this.logger.warn('FFmpeg is missing: no .mp4 files can be produced until it is installed.');
+    }
+    if (!hasChromium) {
+      this.logger.warn('Chromium is missing: slideshow videos cannot be rendered until you run "npx playwright install chromium".');
     }
     console.log('');
     return { hasText, hasImages, hasTTS, hasFFmpeg, hasUpload };
@@ -540,7 +550,8 @@ class YouTubeAutomationAgent {
             automationPaused: this.scheduler ? !this.scheduler.isEnabled : true,
             agents: Object.keys(this.agents),
             autonomousRunning: Boolean(await this.db.getActiveOperatorRun()),
-            videoProviders: this.agents.production?.aiVideoGenerator?.mediaGeneration?.listProviders() || []
+            videoProviders: this.agents.production?.aiVideoGenerator?.mediaGeneration?.listProviders() || [],
+            imageProviders: await new ImageGenerationService(this.credentials?.credentials || {}, { db: this.db }).list()
           }
         });
       } catch (error) {
@@ -923,27 +934,32 @@ class YouTubeAutomationAgent {
         const bundle = await this.db.getProductionBundle(req.params.productionId);
         if (!bundle) return res.status(404).json({ error: 'Content not found' });
         if (bundle.review_status === 'approved' || bundle.schedule) {
-          return res.status(409).json({ error: 'Provenance is locked after content is approved or scheduled' });
+          return res.status(409).json({ error: 'The disclosure is locked after content is approved or scheduled' });
         }
         if (!this.provenance) this.provenance = new ProvenanceService(this.db);
-        await this.provenance.review(bundle.id, req.body || {});
-        const updated = await this.db.getProductionBundle(bundle.id);
-        const profile = await this.db.getChannelProfile() || {};
-        const quality = await this.operator.runQualityChecks({
-          ...updated,
-          scheduledPublishTime: updated.scheduled_publish_time
-        }, profile);
-        const reviewStatus = quality.passed ? 'needs_review' : 'needs_attention';
-        const result = await this.db.saveContentReview(bundle.id, {
-          status: reviewStatus,
-          editorData: updated.editorData,
-          qualityChecks: quality.checks,
-          reviewNotes: quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`,
-          reviewedAt: null
-        });
-        return res.json({ success: true, result: this.decorateContentBundle(result) });
+        await this.provenance.setSyntheticMediaDisclosure(bundle.id, req.body?.containsSyntheticMedia === true);
+        return res.json({ success: true, result: this.decorateContentBundle(await this.db.getProductionBundle(bundle.id)) });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/research/audit', protect, async (req, res) => {
+      try {
+        const bundle = await this.db.getProductionBundle(req.params.productionId);
+        if (!bundle) return res.status(404).json({ error: 'Content not found' });
+        if (bundle.review_status === 'approved' || bundle.schedule) return res.status(409).json({ error: 'Research is locked after approval or scheduling' });
+        const factPack = bundle.provenance?.research?.factPack;
+        if (!factPack) return res.status(409).json({ error: 'Generate a researched episode before running its audit' });
+        const research = await this.getResearchService();
+        if (!research.isEnabled()) return res.status(409).json({ error: 'Select ChatGPT or Claude research in Channel setup' });
+        const audit = await research.auditContent(bundle, factPack);
+        if (!this.provenance) this.provenance = new ProvenanceService(this.db);
+        await this.provenance.recordAudit(bundle.id, bundle, audit);
+        await this.refreshContentReview(bundle.id, 'Research audit refreshed.');
+        return res.json({ success: true, result: this.decorateContentBundle(await this.db.getProductionBundle(bundle.id)) });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, exceptions: error.exceptions || [] });
       }
     });
 
@@ -1247,6 +1263,42 @@ class YouTubeAutomationAgent {
     });
 
     this.app.put('/api/settings', protect, async (req, res) => {
+      try {
+      const imageSettings = {};
+      if (req.body?.research_provider !== undefined) {
+        if (!['auto', 'chatgpt', 'claude', 'disabled'].includes(req.body.research_provider)) return res.status(400).json({ error: 'Unsupported research provider' });
+        imageSettings.research_provider = req.body.research_provider;
+      }
+      if (req.body?.research_scheduled_enabled !== undefined) {
+        if (typeof req.body.research_scheduled_enabled !== 'boolean') return res.status(400).json({ error: 'Research schedule setting must be a boolean' });
+        imageSettings.research_scheduled_enabled = String(req.body.research_scheduled_enabled);
+      }
+      if (req.body?.image_provider !== undefined) {
+        if (!IMAGE_PROVIDERS.includes(req.body.image_provider)) return res.status(400).json({ error: 'Unsupported image provider' });
+        imageSettings.image_provider = req.body.image_provider;
+      }
+      if (req.body?.local_image_backend !== undefined) {
+        if (!LOCAL_BACKENDS.includes(req.body.local_image_backend)) return res.status(400).json({ error: 'Unsupported local image backend' });
+        imageSettings.local_image_backend = req.body.local_image_backend;
+      }
+      for (const key of ['fal_image_model', 'local_image_url', 'comfyui_workflow_path']) {
+        if (req.body?.[key] === undefined) continue;
+        const value = String(req.body[key]).trim();
+        if (value.length > 500) return res.status(400).json({ error: `${key} is too long` });
+        if (key === 'fal_image_model' && (!/^[\w-]+\/[\w./-]+$/.test(value) || value.split('/').includes('..'))) return res.status(400).json({ error: 'Invalid fal model endpoint' });
+        if (key === 'local_image_url' && value) {
+          try { httpUrl(value, 'Local image URL'); } catch (error) { return res.status(400).json({ error: error.message }); }
+        }
+        imageSettings[key] = value;
+      }
+      const falKey = req.body?.fal_api_key;
+      if (falKey !== undefined && (typeof falKey !== 'string' || falKey.length > 1000 || /\s/.test(falKey))) return res.status(400).json({ error: 'Invalid fal API key format' });
+      if (falKey && !this.credentials?.saveCredentials) return res.status(503).json({ error: 'Credential storage is unavailable' });
+      if (falKey) {
+        this.credentials.credentials.fal = { ...this.credentials.credentials.fal, apiKey: falKey };
+        await this.credentials.saveCredentials();
+      }
+      for (const [key, value] of Object.entries(imageSettings)) await this.db.setSetting(key, value);
       const allowed = ['approval_required', 'notification_enabled', 'channel_timezone', 'max_daily_posts', 'content_buffer_days'];
       for (const key of allowed) {
         if (req.body?.[key] !== undefined) await this.db.setSetting(key, String(req.body[key]));
@@ -1273,6 +1325,9 @@ class YouTubeAutomationAgent {
         await this.db.setSetting('video_max_generated_seconds', String(value));
       }
       return res.json({ success: true, result: await this.db.getAllSettings() });
+      } catch (error) {
+        return res.status(500).json({ error: 'Could not save operator settings', detail: error.code || 'SETTINGS_SAVE_FAILED' });
+      }
     });
 
     this.app.post('/api/notifications/:notificationId/read', protect, async (req, res) => {
@@ -1390,6 +1445,14 @@ class YouTubeAutomationAgent {
   }
 
   async queueScheduledContent(input = {}) {
+    const research = await this.getResearchService();
+    if (research.isEnabled() && process.env.RESEARCH_SCHEDULED_ENABLED !== 'true' &&
+        await this.db.getSetting('research_scheduled_enabled') !== 'true') {
+      const error = new Error('Trial researched episodes before enabling daily research in Channel setup');
+      error.code = 'RESEARCH_TRIAL_REQUIRED';
+      error.status = 409;
+      throw error;
+    }
     const strategy = await this.db.getChannelStrategy();
     if (strategy?.status === 'active') {
       const weeklyOutput = await this.db.getRow(
@@ -1432,7 +1495,9 @@ class YouTubeAutomationAgent {
         status: cancelled ? 'cancelled' : 'failed',
         stage: failedStage,
         error: error.message,
-        details: { failedStage },
+        details: { failedStage, ...(error.code === 'RESEARCH_BLOCKED' ? {
+          research: { factPack: error.factPack || null, audit: error.audit || null, exceptions: error.exceptions || [] }
+        } : {}) },
         completedAt: new Date().toISOString()
       });
       await this.operator.notify({
@@ -1491,8 +1556,24 @@ class YouTubeAutomationAgent {
     });
     this.logger.info(`Strategy generated: ${strategy.topic}`);
 
+    const research = await this.getResearchService();
+    let factPack = null;
+    if (research.isEnabled()) {
+      factPack = await this.runGenerationStage(jobId, 'research', 18, () => research.buildFactPack(strategy));
+      if (factPack.topic && factPack.topic !== strategy.topic) {
+        strategy.topic = factPack.topic;
+        strategy.angle = factPack.topic;
+      }
+      strategy.researchRequired = true;
+      strategy.factPack = factPack;
+      strategy.researchSources = factPack.sources;
+    } else if (strategy.researchRequired || strategy.factPack || (jobId &&
+      (await this.db.getGenerationCheckpoint(jobId, 'research'))?.status === 'completed')) {
+      throw new Error('This saved documentary requires research; configure ChatGPT or Claude research before resuming');
+    }
+
     // Step 2: Script Writing
-    const script = await this.runGenerationStage(
+    let script = await this.runGenerationStage(
       jobId,
       'script',
       25,
@@ -1501,7 +1582,7 @@ class YouTubeAutomationAgent {
     this.logger.info(`Script generated: ${script.title}`);
 
     // Step 3: Thumbnail Design
-    const thumbnail = await this.runGenerationStage(
+    let thumbnail = await this.runGenerationStage(
       jobId,
       'thumbnail',
       40,
@@ -1510,7 +1591,7 @@ class YouTubeAutomationAgent {
     this.logger.info('Thumbnail generated');
 
     // Step 4: SEO Optimization
-    const seoData = await this.runGenerationStage(
+    let seoData = await this.runGenerationStage(
       jobId,
       'seo',
       52,
@@ -1518,14 +1599,40 @@ class YouTubeAutomationAgent {
     );
     this.logger.info('SEO optimization complete');
 
+    let audit = null;
+    if (factPack) {
+      const checked = await this.runGenerationStage(jobId, 'research_audit', 58, () => research.auditAndRepair(
+        { strategy, script, thumbnail, seo: seoData },
+        { factPack, repair: async (content, feedback) => {
+          // Only the actionable exceptions: the fact pack is already in the prompt.
+          const repairedStrategy = { ...strategy, researchFeedback: feedback.exceptions };
+          const repairedScript = await this.agents.scriptWriter.generateScript(repairedStrategy);
+          const repairedThumbnail = await this.agents.thumbnailDesigner.generateThumbnail(repairedScript);
+          const repairedSeo = await this.agents.seoOptimizer.optimize(repairedScript, repairedStrategy);
+          return { ...content, strategy: repairedStrategy, script: repairedScript, thumbnail: repairedThumbnail, seo: repairedSeo };
+        } }
+      ));
+      script = checked.script;
+      thumbnail = checked.thumbnail;
+      seoData = checked.seo;
+      factPack = checked.factPack;
+      audit = checked.audit;
+      if (!auditIsCurrent(audit, { strategy, script, thumbnail, seo: seoData }, factPack)) {
+        throw new Error('The saved research audit no longer matches this content; resume from research_audit');
+      }
+    }
+
     // Step 5: Production Management
     const productionData = await this.runGenerationStage(
       jobId,
       'production',
       62,
-      () => this.agents.production.processContent({ strategy, script, thumbnail, seo: seoData, jobId })
+      () => this.agents.production.processContent({ strategy, script, thumbnail, seo: seoData, jobId,
+        ...(factPack ? { research: { required: true, factPack, audit } } : {}) })
     );
     this.logger.info('Production processing complete');
+
+    if (factPack) productionData.research = { required: true, factPack, audit };
 
     // Re-persist reused production artifacts in case a restart happened between checkpointing and persistence.
     const contentId = await this.db.saveProductionData(productionData);
@@ -1540,7 +1647,7 @@ class YouTubeAutomationAgent {
     // Step 6: Quality and approval gate
     return this.runGenerationStage(jobId, 'quality_review', 90, async () => {
       const approvalRequired = await this.db.getSetting('approval_required') !== 'false';
-      const packagingExperiment = approvalRequired
+      const packagingExperiment = approvalRequired && !factPack
         ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script)
         : null;
       const quality = await this.operator.runQualityChecks(productionData, profile);
@@ -1599,6 +1706,15 @@ class YouTubeAutomationAgent {
     return this.recovery.run(jobId, stage, progress, producer);
   }
 
+  async getResearchService() {
+    if (this.research) return this.research;
+    const selected = await this.db.getSetting('research_provider');
+    return new ResearchService(this.credentials?.credentials || {}, {
+      ...(['auto', 'chatgpt', 'claude', 'disabled'].includes(selected) ? { provider: selected } : {}),
+      logger: this.logger
+    });
+  }
+
   validateEditorData(input = {}, existing = {}) {
     const output = { ...existing };
     if (input.title !== undefined) {
@@ -1626,7 +1742,6 @@ class YouTubeAutomationAgent {
       if (!['private', 'unlisted', 'public'].includes(input.privacyStatus)) throw new Error('Invalid privacy status');
       output.privacyStatus = input.privacyStatus;
     }
-    if (input.factChecked !== undefined) output.factChecked = input.factChecked === true;
     if (input.rightsConfirmed !== undefined) output.rightsConfirmed = input.rightsConfirmed === true;
     const experiment = output.packagingExperiment;
     if (input.selectedTitleVariant !== undefined) {
@@ -1701,6 +1816,11 @@ class YouTubeAutomationAgent {
     const sceneLabels = new Map((bundle.scenes || []).map(scene => [scene.id, scene.label]));
     return {
       ...bundle,
+      ...(bundle.provenance?.research?.required ? {
+        provenance: { ...bundle.provenance, research: { ...bundle.provenance.research,
+          current: !bundle.provenance.research.invalidatedAt && auditIsCurrent(bundle.provenance.research.audit, bundle, bundle.provenance.research.factPack)
+        } }
+      } : {}),
       scenes: (bundle.scenes || []).map(scene => this.scenes
         ? this.scenes.decorateScene(scene, bundle.id)
         : scene),
@@ -1735,7 +1855,7 @@ class YouTubeAutomationAgent {
     const status = quality.passed ? 'needs_review' : 'needs_attention';
     return this.db.saveContentReview(productionId, {
       status,
-      editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
+      editorData: bundle.editorData || {},
       qualityChecks: quality.checks,
       reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
       reviewedAt: null
@@ -1760,8 +1880,8 @@ class YouTubeAutomationAgent {
     const thumbnailVariant = packagingExperiment?.thumbnailVariants?.[editorData.selectedThumbnailVariant];
     const titleVariant = packagingExperiment?.titleVariants?.[editorData.selectedTitleVariant];
     if (titleVariant && input.title === undefined) editorData.title = titleVariant.title;
-    if (!editorData.factChecked || !editorData.rightsConfirmed) {
-      const error = new Error('Confirm the factual review and media rights checks before approval');
+    if (!editorData.rightsConfirmed) {
+      const error = new Error('Confirm the media rights check before approval');
       error.status = 409;
       throw error;
     }
@@ -1769,12 +1889,12 @@ class YouTubeAutomationAgent {
       id: bundle.id,
       status: bundle.status,
       strategy: bundle.strategy,
-      script: { ...bundle.script, title: editorData.title || bundle.script.title },
-      thumbnail: bundle.thumbnail,
+      script: bundle.provenance?.research?.required ? bundle.script : { ...bundle.script, title: editorData.title || bundle.script.title },
+      thumbnail: thumbnailVariant?.concept ? { ...bundle.thumbnail, concept: thumbnailVariant.concept } : bundle.thumbnail,
       seo: {
         ...bundle.seo,
         title: editorData.title || bundle.seo.title,
-        description: editorData.description || bundle.seo.description,
+        description: editorData.description ?? bundle.seo.description,
         tags: editorData.tags || bundle.seo.tags
       },
       assets: thumbnailVariant
@@ -1786,6 +1906,7 @@ class YouTubeAutomationAgent {
       estimatedDuration: bundle.estimated_duration,
       privacyStatus: editorData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
       provenance: bundle.provenance,
+      research: bundle.provenance?.research,
       containsSyntheticMedia: bundle.provenance?.containsSyntheticMedia === true,
       scenes: bundle.scenes || []
     };

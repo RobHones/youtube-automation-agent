@@ -7,6 +7,7 @@ const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, getMediaDuration, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
+const { ImageGenerationService } = require('./image-generation-service');
 
 const OPENAI_IMAGE_MODEL = 'gpt-image-2';
 
@@ -78,7 +79,7 @@ class AIVideoGenerator {
       this.openai = new OpenAI({ apiKey: openaiKey });
       this.logger.info('OpenAI service initialized');
     } else {
-      this.logger.warn('OpenAI API key not found - AI features will be simulated');
+      this.logger.info('OpenAI is not configured; other selected image and narration providers can still be used');
     }
     
     if (replicateKey) {
@@ -88,7 +89,7 @@ class AIVideoGenerator {
       this.logger.warn('Replicate API key not found - advanced video generation unavailable');
     }
 
-    // Gemini media generation (images + native TTS) — free-tier alternative to OpenAI
+    // Gemini media generation. Image access requires paid project quota.
     const geminiKey = resolvedCredentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
     if (geminiKey) {
       try {
@@ -111,6 +112,22 @@ class AIVideoGenerator {
     this.mediaGeneration = options.mediaGeneration || (this.db
       ? new MediaGenerationService(this.db, resolvedCredentials, { logger: this.logger })
       : null);
+    this.imageService = options.imageService || new ImageGenerationService(resolvedCredentials, {
+      db: this.db,
+      logger: this.logger,
+      legacy: {
+        openai: {
+          isAvailable: () => Boolean(this.openai),
+          generate: (prompt, imagePath) => this.generateOpenAIImage(prompt, imagePath),
+          describeError: error => describeImageProviderError('OpenAI', OPENAI_IMAGE_MODEL, error)
+        },
+        gemini: {
+          isAvailable: () => Boolean(this.gemini),
+          generate: (prompt, imagePath) => this.generateGeminiImage(prompt, imagePath),
+          describeError: error => describeImageProviderError('Gemini', this.geminiImageModel(), error)
+        }
+      }
+    });
   }
 
   async generateTTSAudio(text, outputPath) {
@@ -249,7 +266,7 @@ class AIVideoGenerator {
     this.logger.info(`Generating ${count} visual assets with style: ${style}`);
 
     try {
-      if (!this.openai && !this.gemini) {
+      if (!await this.imageService.isAvailable()) {
         return await this.simulateVisualAssets(prompt, style, count);
       }
 
@@ -270,38 +287,8 @@ class AIVideoGenerator {
     }
   }
 
-  async generateImage(prompt, imagePath) {
-    await fs.mkdir(path.dirname(imagePath), { recursive: true });
-
-    const providers = [];
-    if (this.openai) {
-      providers.push({ name: 'OpenAI', model: OPENAI_IMAGE_MODEL, run: () => this.generateOpenAIImage(prompt, imagePath) });
-    }
-    if (this.gemini) {
-      providers.push({ name: 'Gemini', model: this.geminiImageModel(), run: () => this.generateGeminiImage(prompt, imagePath) });
-    }
-    if (!providers.length) {
-      throw new Error('No image generation provider configured');
-    }
-
-    // Try every configured provider before giving up, so a broken OpenAI key
-    // does not hide a working Gemini key (or the reverse).
-    const failures = [];
-    for (const [index, provider] of providers.entries()) {
-      try {
-        return await provider.run();
-      } catch (error) {
-        const description = describeImageProviderError(provider.name, provider.model, error);
-        failures.push(description);
-        if (index < providers.length - 1) {
-          this.logger.warn(`${description} Trying ${providers[index + 1].name} instead.`);
-        }
-      }
-    }
-
-    const error = new Error(failures.join(' | '));
-    error.providerFailures = failures;
-    throw error;
+  async generateImage(prompt, imagePath, options = {}) {
+    return this.imageService.generate(prompt, imagePath, options);
   }
 
   geminiImageModel() {
@@ -555,7 +542,13 @@ class AIVideoGenerator {
     }
 
     const { chromium } = require('playwright');
-    const browser = await chromium.launch();
+    const browser = await chromium.launch().catch(error => {
+      // After a Playwright upgrade its matching Chromium build must be downloaded again.
+      if (/Executable doesn't exist|playwright install/i.test(error.message)) {
+        throw new Error('The slideshow renderer (Chromium) is not installed. Run "npx playwright install chromium" and restart');
+      }
+      throw error;
+    });
     const slidesDir = path.join(path.dirname(outputPath), 'slides');
 
     try {
@@ -998,7 +991,7 @@ class AIVideoGenerator {
     this.logger.info('Generating custom thumbnail...');
 
     try {
-      if (!this.openai && !this.gemini) {
+      if (!await this.imageService.isAvailable()) {
         return await this.simulateThumbnailGeneration(script, style);
       }
 

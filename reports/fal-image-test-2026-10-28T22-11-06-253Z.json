@@ -1,0 +1,99 @@
+{
+  "model": "fal-ai/flux/schnell",
+  "prompt": "Cinematic documentary illustration of a forgotten underground postal railway beneath Victorian London. A small driverless green mail train on narrow gauge rails inside an aged brick tunnel, canvas mail sacks on the platform, warm tungsten lamps, worn steel and brick textures, subtle atmospheric dust, dramatic but natural lighting, historically inspired reconstruction rather than an archival photograph. Wide establishing composition, clear visual storytelling, realistic machinery, no people, no text, no logos, no watermark. Widescreen 16:9.",
+  "output": "C:\\Workspace\\youtube-automation-agent\\data\\assets\\fal-test-2026-10-28T22-11-06-253Z.png",
+  "width": 1024,
+  "height": 576,
+  "megapixels": 0.589824,
+  "wallSeconds": 3.35,
+  "requestId": "01a18491-12ae-7e50-8e50-c34728006ece",
+  "seed": 971937643,
+  "providerImageDimensions": [
+    {
+      "width": 1024,
+      "height": 576
+    }
+  ],
+  "providerTimings": {
+    "inference": 0.36838596605230123
+  },
+  "pricing": {
+    "source": "https://fal.ai/models/fal-ai/flux/schnell",
+    "usdPerRoundedUpMegapixel": 0.003,
+    "estimatedUsdPerImage": 0.003,
+    "estimateOnly": true,
+    "actualInvoiceNotRead": true
+  },
+  "videoImageEstimates": {
+    "currentMaxSceneImages": 5,
+    "thumbnailImages": 1,
+    "maxInitialImages": 6,
+    "maxInitialImageCostUsd": 0.018000000000000002,
+    "twentyImagesUsd": 0.06,
+    "fortyImagesUsd": 0.12,
+    "excludes": [
+      "narration",
+      "text generation",
+      "paid video clips",
+      "retries and regeneration",
+      "tax"
+    ]
+  },
+  "fullVideoEstimate": {
+    "asOf": "2026-10-28",
+    "currency": "USD",
+    "narration": {
+      "model": "gemini-3.8-flash-tts",
+      "pricingSource": "https://ai.google.dev/gemini-api/docs/pricing",
+      "paidRatesValidThrough": "2026-12-31",
+      "freeQuotaNotVerified": true,
+      "examples": [
+        {
+          "minutes": 8,
+          "audioSeconds": 480,
+          "outputUsd": 0.10799999999999998,
+          "assumedInputTokens": 1600,
+          "inputUsd": 0.0008
+        },
+        {
+          "minutes": 10,
+          "audioSeconds": 600,
+          "outputUsd": 0.13499999999999998,
+          "assumedInputTokens": 2000,
+          "inputUsd": 0.001
+        }
+      ]
+    },
+    "scenarios": [
+      {
+        "sceneImages": 5,
+        "thumbnailImages": 1,
+        "imageCostUsd": 0.018,
+        "withPaidNarration8MinutesUsd": 0.127,
+        "withPaidNarration10MinutesUsd": 0.154
+      },
+      {
+        "sceneImages": 20,
+        "thumbnailImages": 1,
+        "imageCostUsd": 0.063,
+        "withPaidNarration8MinutesUsd": 0.172,
+        "withPaidNarration10MinutesUsd": 0.199
+      },
+      {
+        "sceneImages": 40,
+        "thumbnailImages": 1,
+        "imageCostUsd": 0.123,
+        "withPaidNarration8MinutesUsd": 0.232,
+        "withPaidNarration10MinutesUsd": 0.259
+      }
+    ],
+    "assumptions": [
+      "One generation per image, no retries",
+      "No paid generated video clips; local slideshow assembly",
+      "Text generation uses the existing subscription setup; subscription fee excluded",
+      "Narration input token count is an estimate",
+      "Taxes, electricity, and editing time excluded",
+      "No provider invoice or live TTS quota was read"
+    ]
+  }
+}

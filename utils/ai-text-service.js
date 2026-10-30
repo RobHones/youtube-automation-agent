@@ -1,5 +1,11 @@
 const OpenAI = require('openai');
 const { Logger } = require('./logger');
+const {
+  cursorEnvSelected,
+  claudeEnvSelected,
+  codexEnvSelected,
+  generateSubscriptionText,
+} = require('./subscription-text');
 
 const GEMINI_MODELS = [
   'gemini-3.8-flash',
@@ -11,6 +17,30 @@ const GEMINI_DEFAULT_MODEL = GEMINI_MODELS[0];
 const GEMINI_THINKING_RETRY_MIN_TOKENS = 1024;
 
 const PROVIDERS = {
+  cursor: {
+    name: 'Cursor',
+    defaultModel: 'composer-2.5',
+    models: ['composer-2.5', 'auto'],
+    envKey: 'CURSOR_API_KEY',
+    subscription: true,
+    defaultRuntime: 'local',
+  },
+  claude: {
+    name: 'Claude',
+    defaultModel: 'sonnet',
+    models: ['sonnet', 'opus', 'haiku', 'fable'],
+    envKey: 'CLAUDE_RUNTIME',
+    subscription: true,
+    defaultRuntime: 'local',
+  },
+  chatgpt: {
+    name: 'ChatGPT',
+    defaultModel: 'gpt-5.6-luna',
+    models: ['gpt-5.6-luna', 'gpt-5.6-terra'],
+    envKey: 'CODEX_RUNTIME',
+    subscription: true,
+    defaultRuntime: 'local',
+  },
   openai: {
     name: 'OpenAI',
     baseURL: 'https://api.openai.com/v1',
@@ -64,13 +94,29 @@ const PROVIDERS = {
   },
 };
 
+function isTextProviderConfigured(credentials = {}, env = process.env) {
+  if (credentials.openai?.apiKey || credentials.gemini?.apiKey || credentials.aiProvider?.apiKey) {
+    return true;
+  }
+  if (cursorEnvSelected(env) || claudeEnvSelected(env) || codexEnvSelected(env)) {
+    return true;
+  }
+  const envKeys = [
+    ...Object.values(PROVIDERS).filter(preset => !preset.subscription).map(preset => preset.envKey),
+    'GEMINI_API_KEY',
+  ];
+  return envKeys.some(key => env[key]);
+}
+
 class AITextService {
   constructor(credentials = {}) {
     this.logger = new Logger('AITextService');
     this.client = null;
     this.gemini = null;
+    this.subscription = null;
     this.model = null;
     this.providerName = null;
+    this._generateSubscription = generateSubscriptionText;
 
     this._init(credentials);
   }
@@ -80,15 +126,38 @@ class AITextService {
     const apiKey = credentials.aiProvider?.apiKey;
     const model = credentials.aiProvider?.model;
 
+    if (provider === 'gemini' && apiKey) {
+      return this._initGemini(apiKey, model);
+    }
+
+    if (provider && PROVIDERS[provider]?.subscription && apiKey) {
+      return this._initSubscription(provider, {
+        apiKey,
+        model,
+        runtime: credentials.aiProvider.runtime,
+      });
+    }
+
     if (provider && PROVIDERS[provider] && apiKey) {
       return this._initOpenAICompatible(PROVIDERS[provider], apiKey, model);
     }
 
+    const subscription = this._subscriptionFromEnv();
+    if (subscription) {
+      return this._initSubscription(subscription.provider, subscription);
+    }
+
     for (const [, preset] of Object.entries(PROVIDERS)) {
+      if (preset.subscription) continue;
       const key = process.env[preset.envKey];
       if (key) {
         return this._initOpenAICompatible(preset, key);
       }
+    }
+
+    // Older setup flows saved OpenAI separately from the explicit text choice.
+    if (credentials.openai?.apiKey) {
+      return this._initOpenAICompatible(PROVIDERS.openai, credentials.openai.apiKey, credentials.openai.model);
     }
 
     const geminiKey = credentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
@@ -97,6 +166,53 @@ class AITextService {
     }
 
     this.logger.warn('No AI text provider configured — text generation unavailable');
+  }
+
+  _subscriptionFromEnv() {
+    const matches = [];
+    if (cursorEnvSelected()) {
+      matches.push({
+        provider: 'cursor',
+        apiKey: process.env.CURSOR_API_KEY,
+        model: process.env.CURSOR_MODEL,
+        runtime: process.env.CURSOR_RUNTIME,
+      });
+    }
+    if (claudeEnvSelected()) {
+      matches.push({
+        provider: 'claude',
+        apiKey: 'subscription',
+        model: process.env.CLAUDE_MODEL,
+        runtime: process.env.CLAUDE_RUNTIME,
+      });
+    }
+    if (codexEnvSelected()) {
+      matches.push({
+        provider: 'chatgpt',
+        apiKey: 'subscription',
+        model: process.env.CODEX_MODEL,
+        runtime: process.env.CODEX_RUNTIME,
+      });
+    }
+    if (matches.length > 1) {
+      this.logger.warn(
+        `Multiple subscription text providers are set (${matches.map(match => match.provider).join(', ')}). Using ${matches[0].provider}.`
+      );
+    }
+    return matches[0] || null;
+  }
+
+  _initSubscription(id, { apiKey, model, runtime }) {
+    const preset = PROVIDERS[id];
+    this.subscription = {
+      id,
+      apiKey,
+      model: model || preset.defaultModel,
+      runtime: String(runtime || preset.defaultRuntime).trim().toLowerCase(),
+    };
+    this.model = this.subscription.model;
+    this.providerName = preset.name;
+    this.logger.info(`${preset.name} subscription initialized (model: ${this.model}, runtime: ${this.subscription.runtime})`);
   }
 
   _initOpenAICompatible(preset, apiKey, model) {
@@ -122,6 +238,17 @@ class AITextService {
     const model = options.model || this.model;
     const maxTokens = options.maxTokens || 2048;
     const temperature = options.temperature ?? 0.7;
+
+    if (this.subscription) {
+      const text = await this._generateSubscription({
+        ...this.subscription,
+        model,
+      }, prompt, this.logger);
+      if (typeof text !== 'string' || !text.trim()) {
+        throw new Error(`${this.providerName} returned an empty response.`);
+      }
+      return text;
+    }
 
     if (this.gemini) {
       const config = { maxOutputTokens: maxTokens };
@@ -249,8 +376,14 @@ class AITextService {
   }
 
   isAvailable() {
-    return !!(this.client || this.gemini);
+    return !!(this.client || this.gemini || this.subscription);
   }
 }
 
-module.exports = { AITextService, PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL };
+module.exports = {
+  AITextService,
+  PROVIDERS,
+  GEMINI_MODELS,
+  GEMINI_DEFAULT_MODEL,
+  isTextProviderConfigured,
+};

@@ -316,7 +316,7 @@ class ShortsRepurposingService {
   inheritedEvidence(bundle) {
     const blockingReasons = [];
     if (bundle.review_status !== 'approved') blockingReasons.push('source approval');
-    if (!['verified', 'not_required'].includes(bundle.provenance?.status || 'not_required')) blockingReasons.push('provenance review');
+    if (!['verified', 'not_required'].includes(bundle.provenance?.status || 'not_required')) blockingReasons.push('research audit');
     const unlicensed = (bundle.scenes || []).filter(scene => scene.assetOrigin === 'uploaded' && !scene.rightsConfirmed);
     if (unlicensed.length) blockingReasons.push('media rights');
     const stale = (bundle.scenes || []).filter(scene =>

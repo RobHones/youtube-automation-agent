@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const axios = require('axios');
 const { Logger } = require('./logger');
+const { ProvenanceService } = require('./provenance-service');
 
 class OperatorService {
   constructor(db) {
@@ -33,7 +34,7 @@ class OperatorService {
           : thumbnail?.path ? 'Thumbnail asset is present' : 'Thumbnail asset is missing', false),
       this.check('video', Boolean(finalVideo?.path && !finalVideo?.simulated),
         finalVideo?.simulated
-          ? 'Only a simulated video was produced'
+          ? `The final MP4 was not made${finalVideo.blockedReason ? `: ${finalVideo.blockedReason}` : ''}. Fix the cause, then use Rebuild final video`
           : finalVideo?.path ? 'Final MP4 is ready' : 'Final MP4 is missing')
     ];
 
@@ -92,14 +93,18 @@ class OperatorService {
         : 'No blocked brand topics detected'));
 
     const provenance = production.provenance || {};
+    try {
+      new ProvenanceService(this.db).assertResearchCurrent(production, provenance);
+    } catch (error) {
+      checks.push(this.check('research_audit', false, error.message));
+    }
     const provenancePassed = ['verified', 'not_required'].includes(provenance.status || 'not_required');
-    const unresolved = Number(provenance.summary?.unresolvedClaims || 0);
     checks.push(this.check('provenance', provenancePassed,
       provenance.status === 'verified'
-        ? `${provenance.summary?.resolvedClaims || 0} factual claims resolved against reviewed evidence`
+        ? `${provenance.summary?.resolvedClaims || 0} factual claims passed the research audit`
         : provenance.status === 'not_required'
-          ? 'No externally verifiable factual claims were declared'
-          : `${unresolved} factual claim${unresolved === 1 ? '' : 's'} still require evidence review`));
+          ? 'Research is off for this video; no evidence review is needed'
+          : 'The research audit has not passed'));
 
     const discoverability = production.discoverability;
     if (discoverability) {

@@ -4,6 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 const { Logger } = require('../utils/logger');
 const { assertValidYouTubeMetadata } = require('../utils/youtube-metadata-validator');
+const { ProvenanceService } = require('../utils/provenance-service');
 
 class PublishingSchedulingAgent {
   constructor(db, credentials) {
@@ -44,6 +45,7 @@ class PublishingSchedulingAgent {
 
   async scheduleContent(productionData) {
     try {
+      new ProvenanceService(this.db).assertResearchCurrent(productionData, productionData.provenance);
       const finalVideo = productionData.assets?.finalVideo;
       if (!finalVideo || finalVideo.simulated || path.extname(finalVideo.path || '').toLowerCase() !== '.mp4') {
         this.logger.warn(`Not scheduling ${productionData.id}: no real video file was produced (placeholder/simulated output). Fix your AI provider keys and FFmpeg, then regenerate.`);
@@ -116,7 +118,7 @@ class PublishingSchedulingAgent {
       if (this.db.getProductionBundle) {
         productionBundle = await this.db.getProductionBundle(contentId);
         if (productionBundle && !['verified', 'not_required'].includes(productionBundle.provenance?.status || 'not_required')) {
-          const error = new Error('Publishing is blocked until every factual claim is supported or explicitly waived');
+          const error = new Error('Publishing is blocked until the research audit passes');
           error.status = 409;
           error.code = 'PROVENANCE_BLOCKED';
           throw error;
@@ -135,6 +137,13 @@ class PublishingSchedulingAgent {
         throw new Error(`Content not found in queue: ${contentId}`);
       }
       if (scheduleEntry.status === 'published') return scheduleEntry;
+      if (productionBundle) {
+        new ProvenanceService(this.db).assertResearchCurrent({
+          ...productionBundle,
+          editorData: { ...productionBundle.editorData, ...scheduleEntry.metadata?.seo },
+          seo: scheduleEntry.metadata?.seo || productionBundle.seo
+        }, productionBundle.provenance);
+      }
       if (!await this.isNarrationReady(scheduleEntry.metadata?.audio || productionBundle?.assets?.audio)) {
         const error = new Error('Publishing is blocked because narration is missing or the intentional-silence override is incomplete');
         error.status = 409;

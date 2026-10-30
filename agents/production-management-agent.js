@@ -51,6 +51,12 @@ class ProductionManagementAgent {
       this.logger.info('Processing content for production...');
       
       const { strategy, script, thumbnail, seo, jobId = null } = contentData;
+      if (strategy.researchRequired) {
+        const { auditIsCurrent } = require('../utils/research-contract');
+        if (!auditIsCurrent(contentData.research?.audit, contentData, contentData.research?.factPack)) {
+          throw new Error('Production requires a current research audit before generating media');
+        }
+      }
       
       // Create production entry
       const productionId = this.generateProductionId();
@@ -61,6 +67,7 @@ class ProductionManagementAgent {
         script,
         thumbnail,
         seo,
+        ...(contentData.research ? { research: contentData.research } : {}),
         status: 'processing',
         assets: {
           script: await this.processScript(script),
@@ -219,7 +226,10 @@ class ProductionManagementAgent {
   }
 
   async processThumbnail(thumbnail, script) {
-    try {
+    // Preserve the exact overlay wording already audited for a documentary.
+    if (script.metadata?.strategy?.researchRequired) {
+      this.logger.info('Using the audited documentary thumbnail');
+    } else try {
       // Try to generate AI thumbnail first
       const thumbnailScript = thumbnail.script || script || { title: thumbnail.title || 'Untitled Video' };
       const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, 'ethereal');
@@ -603,7 +613,7 @@ class ProductionManagementAgent {
 
       // The generator falls back to a placeholder .info file when it cannot render
       if (!producedPath || path.extname(producedPath).toLowerCase() !== '.mp4') {
-        return await this.simulateVideoAssembly(productionData);
+        return await this.simulateVideoAssembly(productionData, this.aiVideoGenerator.lastVideoResult?.fallbackReason || null);
       }
 
       // Get file stats
@@ -628,7 +638,7 @@ class ProductionManagementAgent {
     } catch (error) {
       this.logger.error('AI video assembly failed:', error);
       // Fallback to simulation
-      return await this.simulateVideoAssembly(productionData);
+      return await this.simulateVideoAssembly(productionData, error.message);
     }
   }
 

@@ -4,7 +4,7 @@ const { google } = require('googleapis');
 const inquirer = require('inquirer');
 const chalk = require('chalk');
 const { Logger } = require('./logger');
-const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL } = require('./ai-text-service');
+const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL, isTextProviderConfigured } = require('./ai-text-service');
 
 // API keys and OAuth tokens are owner-only (0600). writeFile's mode applies only
 // when the file is created, so files written by older versions are tightened too.
@@ -168,6 +168,121 @@ class CredentialManager {
     return granted.split(/\s+/).includes(scope);
   }
 
+  // Cursor plan. The key is a Cursor user API key, not a model-vendor key.
+  async setupCursorCredentials() {
+    console.log(chalk.cyan('\nCursor subscription'));
+    console.log(chalk.gray('Create a user API key at https://cursor.com/dashboard/integrations'));
+    console.log(chalk.gray('Usage is billed to your Cursor plan. Node.js 22.13+ is required.'));
+
+    const answers = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'apiKey',
+        message: 'Enter your Cursor API key:',
+        validate: input => input.trim().length > 0 || 'API key is required'
+      },
+      {
+        type: 'list',
+        name: 'runtime',
+        message: 'Where should Cursor run?',
+        choices: [
+          { name: 'Local — on this machine', value: 'local' },
+          { name: 'Cloud — empty Cursor VM, no repo checkout', value: 'cloud' }
+        ],
+        default: 'local'
+      },
+      {
+        type: 'list',
+        name: 'model',
+        message: 'Select model:',
+        choices: [...PROVIDERS.cursor.models],
+        default: PROVIDERS.cursor.defaultModel
+      }
+    ]);
+
+    this.credentials.aiProvider = {
+      provider: 'cursor',
+      apiKey: answers.apiKey.trim(),
+      model: answers.model,
+      runtime: answers.runtime
+    };
+
+    await this.saveCredentials();
+    console.log(chalk.green('Cursor subscription configured.'));
+  }
+
+  async setupClaudeSubscription() {
+    console.log(chalk.cyan('\nClaude subscription'));
+    console.log(chalk.gray('Install Claude Code, then run: claude auth login'));
+    console.log(chalk.gray('Sign in with Claude Pro or Max. Do not pass --console, and unset ANTHROPIC_API_KEY.'));
+    console.log(chalk.gray('Text generation runs locally. claude -p cannot start a cloud task and return the reply.'));
+
+    const answers = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'ready',
+        message: 'Have you signed in with claude auth login?',
+        default: true
+      },
+      {
+        type: 'list',
+        name: 'model',
+        message: 'Select model:',
+        choices: [...PROVIDERS.claude.models],
+        default: PROVIDERS.claude.defaultModel,
+        when: current => current.ready
+      }
+    ]);
+
+    if (!answers.ready) return;
+
+    this.credentials.aiProvider = {
+      provider: 'claude',
+      apiKey: 'subscription',
+      model: answers.model,
+      runtime: 'local'
+    };
+
+    await this.saveCredentials();
+    console.log(chalk.green('Claude subscription configured.'));
+  }
+
+  async setupChatGPTSubscription() {
+    console.log(chalk.cyan('\nChatGPT subscription'));
+    console.log(chalk.gray('Install the Codex CLI, then run: codex login'));
+    console.log(chalk.gray('Sign in with ChatGPT. Do not use codex login --with-api-key.'));
+    console.log(chalk.gray('Text generation runs locally. codex cloud exec does not return the reply.'));
+
+    const answers = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'ready',
+        message: 'Have you signed in with codex login?',
+        default: true
+      },
+      {
+        type: 'list',
+        name: 'model',
+        message: 'Select model:',
+        choices: [...PROVIDERS.chatgpt.models],
+        default: PROVIDERS.chatgpt.defaultModel,
+        when: current => current.ready
+      }
+    ]);
+
+    if (!answers.ready) return;
+
+    this.credentials.aiProvider = {
+      provider: 'chatgpt',
+      apiKey: 'subscription',
+      model: answers.model,
+      runtime: 'local'
+    };
+
+    await this.saveCredentials();
+    console.log(chalk.green('ChatGPT subscription configured.'));
+  }
+
   // OpenAI API Setup
   async setupOpenAICredentials() {
     console.log(chalk.cyan('\n🤖 OpenAI API Setup'));
@@ -193,6 +308,7 @@ class CredentialManager {
       apiKey: answers.apiKey,
       model: answers.model
     };
+    this.credentials.aiProvider = { provider: 'openai', ...this.credentials.openai };
 
     await this.saveCredentials();
     console.log(chalk.green('✅ OpenAI credentials configured successfully!'));
@@ -223,6 +339,7 @@ class CredentialManager {
       apiKey: answers.apiKey,
       model: answers.model
     };
+    this.credentials.aiProvider = { provider: 'gemini', ...this.credentials.gemini };
 
     await this.saveCredentials();
     console.log(chalk.green('✅ Gemini credentials configured successfully!'));
@@ -582,13 +699,7 @@ class CredentialManager {
   }
   // Validation methods
   hasAITextProvider() {
-    if (this.credentials.openai?.apiKey || this.credentials.gemini?.apiKey || this.credentials.aiProvider?.apiKey) {
-      return true;
-    }
-
-    // Environment-variable based configuration (see utils/ai-text-service.js)
-    const envKeys = [...Object.values(PROVIDERS).map(p => p.envKey), 'GEMINI_API_KEY'];
-    return envKeys.some(key => process.env[key]);
+    return isTextProviderConfigured(this.credentials);
   }
 
   getMissingCredentials() {
@@ -599,7 +710,7 @@ class CredentialManager {
     }
 
     if (!this.hasAITextProvider()) {
-      missing.push('an AI provider (OpenAI, Gemini, OpenRouter, Kimi, MiMo, GLM, DeepSeek, or MiniMax)');
+      missing.push('an AI provider (a Cursor, Claude, or ChatGPT subscription, or an API key for OpenAI, Gemini, OpenRouter, Kimi, MiMo, GLM, DeepSeek, or MiniMax)');
     }
 
     return missing;
@@ -703,6 +814,9 @@ class CredentialManager {
         name: 'service',
         message: 'Select your preferred AI service:',
         choices: [
+          { name: 'Cursor plan (local or cloud, subscription key)', value: 'cursor' },
+          { name: 'Claude Pro/Max (Claude Code login)', value: 'claude' },
+          { name: 'ChatGPT plan (Codex login)', value: 'chatgpt' },
           { name: 'OpenAI (GPT-6.1 Sol)', value: 'openai' },
           { name: 'Google Gemini (Gemini 3.8 Flash)', value: 'gemini' },
           { name: 'OpenRouter (400+ models, one API key)', value: 'openrouter' },
@@ -716,6 +830,9 @@ class CredentialManager {
     ]);
 
     switch (service) {
+      case 'cursor': return await this.setupCursorCredentials();
+      case 'claude': return await this.setupClaudeSubscription();
+      case 'chatgpt': return await this.setupChatGPTSubscription();
       case 'openai': return await this.setupOpenAICredentials();
       case 'gemini': return await this.setupGeminiCredentials();
       case 'openrouter': return await this.setupOpenRouterCredentials();
