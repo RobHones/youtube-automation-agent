@@ -3,7 +3,6 @@ const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
 const { getMediaDuration, runFFmpeg } = require('./ffmpeg');
-const { ProvenanceService } = require('./provenance-service');
 
 const VIDEO_EXTENSIONS = new Set(['.mp4']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -220,32 +219,11 @@ class SceneRepairService {
       revision: scriptChanged || promptChanged || durationChanged ? scene.revision + 1 : scene.revision
     });
 
-    if (scriptChanged && input.factualChange !== false) {
-      await this.markSceneClaimForReview(bundle, next, verifiedSourceIds);
-    }
     await this.db.saveProductionSceneRevision({
       productionId, sceneId, action: 'edit', before: scene, after: next,
       costEvidence: { billed: false }
     });
     return next;
-  }
-
-  async markSceneClaimForReview(bundle, scene, verifiedSourceIds) {
-    const provenance = bundle.provenance || { sources: [], claims: [], containsSyntheticMedia: false };
-    const id = `scene_claim_${scene.id}_r${scene.revision}`;
-    const sourceIds = scene.provenanceSourceIds.filter(sourceId => verifiedSourceIds.has(sourceId));
-    const claims = [...(provenance.claims || []).filter(claim => !String(claim.id).startsWith(`scene_claim_${scene.id}_`)), {
-      id,
-      text: scene.scriptText,
-      riskLevel: 'standard',
-      sourceIds,
-      status: sourceIds.length ? 'supported' : 'pending',
-      notes: `Narration changed in ${scene.label}; review before approval.`
-    }];
-    await new ProvenanceService(this.db).review(bundle.id, {
-      sources: provenance.sources || [], claims,
-      containsSyntheticMedia: provenance.containsSyntheticMedia
-    });
   }
 
   async reorder(productionId, orderedIds) {

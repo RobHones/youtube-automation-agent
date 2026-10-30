@@ -865,75 +865,27 @@ function switchView(view) {
   if (view === 'analytics') loadChannelSnapshot();
 }
 
-function selectOptions(options, selected) {
-  return options.map(([value, label]) =>
-    `<option value="${escapeHTML(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(label)}</option>`
-  ).join('');
-}
-
 function researchWorkerLabel(checkedBy) {
   if (!checkedBy?.provider) return 'Research worker';
   const name = { chatgpt: 'ChatGPT', claude: 'Claude' }[checkedBy.provider] || checkedBy.provider;
   return checkedBy.model ? `${name} · ${checkedBy.model}` : name;
 }
 
-function renderSourceEditor(source = {}, disabled = false) {
-  return `<article class="provenance-item" data-provenance-source data-id="${escapeHTML(source.id || '')}" data-published-at="${escapeHTML(source.publishedAt || '')}" data-accessed-at="${escapeHTML(source.accessedAt || '')}">
-    <div class="provenance-item-heading"><strong>Research source</strong><button type="button" class="text-button danger-text" data-remove-provenance ${disabled ? 'disabled' : ''}>Remove</button></div>
-    <label><span>URL</span><input data-field="url" type="url" value="${escapeHTML(source.url || '')}" placeholder="https://..." required ${disabled ? 'disabled' : ''}></label>
-    <div class="form-grid two">
-      <label><span>Title</span><input data-field="title" value="${escapeHTML(source.title || '')}" maxlength="300" ${disabled ? 'disabled' : ''}></label>
-      <label><span>Publisher</span><input data-field="publisher" value="${escapeHTML(source.publisher || '')}" maxlength="200" ${disabled ? 'disabled' : ''}></label>
-      <label><span>Type</span><select data-field="sourceType" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['official', 'Official source'], ['article', 'Article'], ['video', 'Video'], ['dataset', 'Dataset'], ['asset', 'Asset or license'], ['other', 'Other']
-      ], source.sourceType || 'other')}</select></label>
-      <label><span>Review status</span><select data-field="status" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['pending', 'Pending review'], ['verified', 'Verified'], ['rejected', 'Rejected']
-      ], source.status || 'pending')}</select></label>
-    </div>
-    <label><span>Evidence notes</span><textarea data-field="notes" rows="2" maxlength="1000" ${disabled ? 'disabled' : ''}>${escapeHTML(source.notes || '')}</textarea></label>
-    ${source.url ? `<a class="source-link" href="${escapeHTML(source.url)}" target="_blank" rel="noopener">Open source ↗</a>` : ''}
-  </article>`;
-}
-
-function renderClaimEditor(claim = {}, sources = [], disabled = false) {
-  const linked = new Set(claim.sourceIds || []);
-  return `<article class="provenance-item ${claim.riskLevel === 'high' ? 'high-risk' : ''}" data-provenance-claim data-id="${escapeHTML(claim.id || '')}">
-    <div class="provenance-item-heading"><strong>Factual claim</strong><button type="button" class="text-button danger-text" data-remove-provenance ${disabled ? 'disabled' : ''}>Remove</button></div>
-    <label><span>Claim</span><textarea data-field="text" rows="3" maxlength="1000" required ${disabled ? 'disabled' : ''}>${escapeHTML(claim.text || '')}</textarea></label>
-    <div class="form-grid two">
-      <label><span>Risk</span><select data-field="riskLevel" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['standard', 'Standard'], ['high', 'High risk']
-      ], claim.riskLevel || 'standard')}</select></label>
-      <label><span>Resolution</span><select data-field="status" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['pending', 'Pending'], ['supported', 'Supported'], ['unsupported', 'Unsupported'], ['waived', 'Waived with note']
-      ], claim.status || 'pending')}</select></label>
-    </div>
-    <fieldset class="source-checklist" ${disabled ? 'disabled' : ''}><legend>Supporting sources</legend>
-      ${sources.length ? sources.map(source => `<label><input type="checkbox" data-claim-source="${escapeHTML(source.id)}" ${linked.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title || source.url)}</label>`).join('') : '<small>Add a source before marking this claim supported.</small>'}
-    </fieldset>
-    <label><span>Reviewer notes</span><textarea data-field="notes" rows="2" maxlength="1000" placeholder="Required when waived" ${disabled ? 'disabled' : ''}>${escapeHTML(claim.notes || '')}</textarea></label>
-    ${(claim.evidence || []).length ? `<details><summary>Supporting passages · ${escapeHTML(claim.machineCheckStatus || 'pending')}</summary>${claim.evidence.map(item => `<blockquote>${escapeHTML(item.passage || '')}</blockquote><small>${escapeHTML(item.location || '')} · ${escapeHTML(item.evidenceHash || '')}</small>`).join('')}</details>` : ''}
-  </article>`;
-}
-
-function renderProvenanceEditor(provenance = {}, canReview = true) {
+function renderResearchPanel(provenance = {}, canReview = true) {
+  const research = provenance.research;
+  if (!research?.required) return '';
   const sources = provenance.sources || [];
   const claims = provenance.claims || [];
-  const summary = provenance.summary || {};
-  const research = provenance.research;
-  const exceptions = [...(research?.factPack?.exceptions || []), ...(research?.audit?.exceptions || [])];
-  const statusLabel = research?.required ? (research.current ? 'Machine checked · editorial review required' : 'Research audit required') : provenance.status === 'verified' ? 'Evidence verified' : provenance.status === 'not_required' ? 'No claims declared' : `${summary.unresolvedClaims || 0} unresolved`;
+  const passed = provenance.status === 'verified' && research.current;
+  const exceptions = [...(research.factPack?.exceptions || []), ...(research.audit?.exceptions || [])];
   return `<section class="provenance-panel">
-    <div class="panel-heading"><div><p class="eyebrow">RESEARCH &amp; PROVENANCE</p><h3>Evidence desk</h3><p>Verify sources, connect every factual claim, and record disclosure before approval.</p></div><span class="status ${provenance.status === 'verified' || provenance.status === 'not_required' ? 'success' : 'warning'}">${escapeHTML(statusLabel)}</span></div>
-    ${research?.required ? `<div class="callout"><strong>${escapeHTML(researchWorkerLabel(research.audit?.checkedBy || research.factPack?.checkedBy))}</strong><p>${research.current ? 'All audience-facing text has a matching audit. Confirm editorial accuracy and media rights before approval.' : 'Content or evidence changed, or the audit is incomplete. Save edits and run the audit again.'}</p><small>Checked ${escapeHTML(research.audit?.checkedAt || '')} · ${Number(research.audit?.coverage?.length || 0)} text units</small>${canReview ? '<button type="button" class="button secondary small" data-run-research-audit>Run research audit</button>' : ''}</div>` : ''}
-    ${exceptions.length ? `<div class="callout"><strong>Unresolved research exceptions</strong>${exceptions.map(item => `<p>${escapeHTML(typeof item === 'string' ? item : item.message || item.reason || JSON.stringify(item))}</p>`).join('')}</div>` : ''}
-    <div class="provenance-toolbar"><strong>Sources</strong>${canReview ? '<button type="button" class="text-button" data-add-provenance-source>Add source +</button>' : ''}</div>
-    <div id="provenance-sources" class="provenance-list">${sources.map(source => renderSourceEditor(source, !canReview)).join('') || '<p class="empty-inline">No research sources attached.</p>'}</div>
-    <div class="provenance-toolbar"><strong>Claims</strong>${canReview ? '<button type="button" class="text-button" data-add-provenance-claim>Add claim +</button>' : ''}</div>
-    <div id="provenance-claims" class="provenance-list">${claims.map(claim => renderClaimEditor(claim, sources, !canReview)).join('') || '<p class="empty-inline">No externally verifiable claims declared.</p>'}</div>
-    <label class="toggle disclosure-toggle"><input id="contains-synthetic-media" type="checkbox" ${provenance.containsSyntheticMedia ? 'checked' : ''} ${canReview ? '' : 'disabled'}><span></span> Contains realistic altered or synthetic media requiring YouTube disclosure</label>
-    ${canReview ? '<button type="button" class="button secondary" data-save-provenance>Save evidence review</button>' : ''}
+    <div class="panel-heading"><div><p class="eyebrow">RESEARCH</p><h3>Research audit</h3><p>${escapeHTML(researchWorkerLabel(research.audit?.checkedBy || research.factPack?.checkedBy))} checked every factual line against the sources it found. Nothing here needs your review.</p></div><span class="status ${passed ? 'success' : 'warning'}">${passed ? 'Audit passed' : 'Audit needed'}</span></div>
+    ${passed ? '' : `<div class="callout"><p>The script changed after the audit, or the audit did not pass. Run it again to approve this episode.</p>${canReview ? '<button type="button" class="button secondary small" data-run-research-audit>Run research audit</button>' : ''}</div>`}
+    ${exceptions.length ? `<div class="callout"><strong>Audit exceptions</strong>${exceptions.map(item => `<p>${escapeHTML(typeof item === 'string' ? item : item.message || item.reason || JSON.stringify(item))}</p>`).join('')}</div>` : ''}
+    <details><summary>${sources.length} source${sources.length === 1 ? '' : 's'} · ${claims.length} checked claim${claims.length === 1 ? '' : 's'}</summary>
+      <ul class="provenance-list">${sources.map(source => `<li><a class="source-link" href="${escapeHTML(source.url)}" target="_blank" rel="noopener">${escapeHTML(source.title || source.url)} ↗</a>${source.publisher ? ` <small>${escapeHTML(source.publisher)}</small>` : ''}</li>`).join('')}</ul>
+      ${claims.map(claim => `<p class="empty-inline">${escapeHTML(claim.text)}</p>`).join('')}
+    </details>
   </section>`;
 }
 
@@ -964,7 +916,6 @@ function renderDiscoverabilityPanel(item) {
 function renderSceneEditor(item, canReview = true) {
   const scenes = item.scenes || [];
   if (!scenes.length) return '';
-  const verifiedSources = (item.provenance?.sources || []).filter(source => source.status === 'verified');
   const audio = item.assets?.audio || {};
   const intentionalSilence = audio.intentionalSilence === true;
   const narrationIssues = scenes.filter(scene => !['current', 'intentional_silence'].includes(scene.narrationStatus)).length;
@@ -985,7 +936,6 @@ function renderSceneEditor(item, canReview = true) {
     <div class="scene-list">
       ${scenes.map((scene, index) => {
         const disabled = !canReview || scene.locked;
-        const sourceIds = new Set(scene.provenanceSourceIds || []);
         const preview = scene.assetUrl
           ? scene.assetType === 'video'
             ? `<video controls preload="metadata"><source src="${escapeHTML(scene.assetUrl)}"></video>`
@@ -1002,9 +952,7 @@ function renderSceneEditor(item, canReview = true) {
           </div>
           <label><span>Narration</span><textarea data-scene-field="scriptText" rows="4" maxlength="10000" ${disabled ? 'disabled' : ''}>${escapeHTML(scene.scriptText)}</textarea></label>
           <label><span>Visual prompt</span><textarea data-scene-field="prompt" rows="3" maxlength="2000" ${disabled ? 'disabled' : ''}>${escapeHTML(scene.prompt)}</textarea></label>
-          ${verifiedSources.length ? `<fieldset class="source-checklist scene-sources" ${disabled ? 'disabled' : ''}><legend>Verified evidence linked to this narration</legend>${verifiedSources.map(source => `<label><input type="checkbox" data-scene-source value="${escapeHTML(source.id)}" ${sourceIds.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title)}</label>`).join('')}</fieldset>` : ''}
           <div class="scene-options">
-            <label class="toggle"><input type="checkbox" data-scene-factual checked ${disabled ? 'disabled' : ''}><span></span> Narration changes may contain factual claims</label>
             <span>Visual: ${escapeHTML(scene.provider || 'local')} ${scene.model ? `· ${escapeHTML(scene.model)}` : ''}</span>
           </div>
           <div class="scene-narration-evidence"><span>Narration: ${escapeHTML(scene.narrationProvider || 'not generated')}${scene.narrationModel ? ` · ${escapeHTML(scene.narrationModel)}` : ''}${scene.narrationTaskId ? ` · task ${escapeHTML(scene.narrationTaskId)}` : ''}</span>${scene.narrationError ? `<span class="danger-text">${escapeHTML(scene.narrationError)}</span>` : ''}</div>
@@ -1034,7 +982,7 @@ function renderShortsStudio(item) {
     </div>
     <div class="shorts-evidence ${parentApproved ? 'ready' : ''}">
       <span>${parentApproved ? '✓ Source production approved' : 'Source approval required before scheduling'}</span>
-      <span>${escapeHTML(item.provenance?.status === 'verified' ? 'Evidence verified' : item.provenance?.status === 'not_required' ? 'No factual claims declared' : 'Evidence review incomplete')}</span>
+      ${item.provenance?.research?.required ? `<span>${item.provenance.status === 'verified' ? 'Research audit passed' : 'Research audit needed'}</span>` : ''}
       <span>Local render · no new provider call</span>
     </div>
     ${clips.length ? `<div class="shorts-grid">${clips.map(clip => {
@@ -1099,14 +1047,14 @@ async function openContent(productionId) {
         ${renderSceneEditor(item, canReview)}
         ${renderShortsStudio(item)}
         ${renderDiscoverabilityPanel(item)}
-        ${renderProvenanceEditor(item.provenance, canReview)}
+        ${renderResearchPanel(item.provenance, canReview)}
           <div class="form-grid two">
             <label><span>Publish time</span><input name="publishTime" type="datetime-local" value="${toLocalInput(publishTime)}"></label>
             <label><span>Privacy</span><select name="privacyStatus"><option value="private" ${data.privacyStatus === 'private' ? 'selected' : ''}>Private</option><option value="unlisted" ${data.privacyStatus === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="public" ${data.privacyStatus === 'public' ? 'selected' : ''}>Public</option></select></label>
           </div>
           <div class="settings-row">
-            <label class="toggle"><input name="factChecked" type="checkbox" ${data.factChecked ? 'checked' : ''}><span></span> Facts and claims reviewed</label>
             <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Media rights confirmed</label>
+            <label class="toggle"><input id="contains-synthetic-media" type="checkbox" ${item.provenance?.containsSyntheticMedia ? 'checked' : ''} ${canReview ? '' : 'disabled'}><span></span> Contains realistic AI-generated media (YouTube disclosure)</label>
           </div>
           ${item.schedule && !['published', 'uploading', 'uploaded', 'reconciliation_required'].includes(item.schedule.status) ? `<div class="form-actions"><button type="button" class="button secondary" data-reschedule-content="${escapeHTML(item.id)}">Reschedule</button><button type="button" class="button primary" data-publish-now-content="${escapeHTML(item.id)}">Publish now</button><button type="button" class="button danger" data-delete-schedule="${escapeHTML(item.id)}">Delete schedule</button></div>` : ''}
           ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Open on YouTube</a>`}
@@ -1139,7 +1087,6 @@ function contentFormData() {
     privacyStatus: values.privacyStatus,
     selectedTitleVariant: values.selectedTitleVariant,
     selectedThumbnailVariant: values.selectedThumbnailVariant,
-    factChecked: form.elements.factChecked?.checked || false,
     rightsConfirmed: form.elements.rightsConfirmed?.checked || false
   };
 }
@@ -1149,9 +1096,7 @@ function sceneFormData(card) {
     label: card.querySelector('[data-scene-field="label"]').value,
     duration: Number(card.querySelector('[data-scene-field="duration"]').value),
     scriptText: card.querySelector('[data-scene-field="scriptText"]').value,
-    prompt: card.querySelector('[data-scene-field="prompt"]').value,
-    provenanceSourceIds: Array.from(card.querySelectorAll('[data-scene-source]:checked')).map(input => input.value),
-    factualChange: card.querySelector('[data-scene-factual]')?.checked !== false
+    prompt: card.querySelector('[data-scene-field="prompt"]').value
   };
 }
 
@@ -1197,51 +1142,12 @@ async function uploadSceneAsset(productionId, sceneId, file) {
   }
 }
 
-function provenanceFormData() {
-  const sources = $$('[data-provenance-source]').map(item => ({
-    id: item.dataset.id,
-    url: item.querySelector('[data-field="url"]').value,
-    title: item.querySelector('[data-field="title"]').value,
-    publisher: item.querySelector('[data-field="publisher"]').value,
-    sourceType: item.querySelector('[data-field="sourceType"]').value,
-    status: item.querySelector('[data-field="status"]').value,
-    notes: item.querySelector('[data-field="notes"]').value,
-    publishedAt: item.dataset.publishedAt || null,
-    accessedAt: item.dataset.accessedAt || null
-  }));
-  const claims = $$('[data-provenance-claim]').map(item => ({
-    id: item.dataset.id,
-    text: item.querySelector('[data-field="text"]').value,
-    riskLevel: item.querySelector('[data-field="riskLevel"]').value,
-    status: item.querySelector('[data-field="status"]').value,
-    notes: item.querySelector('[data-field="notes"]').value,
-    sourceIds: [...item.querySelectorAll('[data-claim-source]:checked')].map(input => input.dataset.claimSource)
-  }));
-  return {
-    sources,
-    claims,
-    containsSyntheticMedia: $('#contains-synthetic-media')?.checked || false
-  };
-}
-
-function clientId(prefix) {
-  const uuid = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  return `${prefix}_${uuid}`;
-}
-
-function currentSourceOptions() {
-  return $$('[data-provenance-source]').map(item => ({
-    id: item.dataset.id,
-    title: item.querySelector('[data-field="title"]').value || item.querySelector('[data-field="url"]').value || 'New source'
-  }));
-}
-
 async function persistProvenance(productionId, successMessage = null) {
   $('#loading').classList.add('active');
   try {
     const result = await api(`/api/content/${encodeURIComponent(productionId)}/provenance`, {
       method: 'PUT',
-      body: JSON.stringify(provenanceFormData())
+      body: JSON.stringify({ containsSyntheticMedia: $('#contains-synthetic-media')?.checked || false })
     });
     if (successMessage) {
       showToast(successMessage);
@@ -1582,32 +1488,20 @@ document.addEventListener('click', async event => {
     return;
   }
 
-  const addSource = event.target.closest('[data-add-provenance-source]');
-  if (addSource) {
-    const list = $('#provenance-sources');
-    list.querySelector('.empty-inline')?.remove();
-    list.insertAdjacentHTML('beforeend', renderSourceEditor({ id: clientId('source') }));
-    return;
-  }
-
-  const addClaim = event.target.closest('[data-add-provenance-claim]');
-  if (addClaim) {
-    const list = $('#provenance-claims');
-    list.querySelector('.empty-inline')?.remove();
-    list.insertAdjacentHTML('beforeend', renderClaimEditor({ id: clientId('claim') }, currentSourceOptions()));
-    return;
-  }
-
-  const removeProvenance = event.target.closest('[data-remove-provenance]');
-  if (removeProvenance) {
-    removeProvenance.closest('.provenance-item')?.remove();
-    return;
-  }
-
-  const saveProvenance = event.target.closest('[data-save-provenance]');
-  if (saveProvenance) {
+  const runAudit = event.target.closest('[data-run-research-audit]');
+  if (runAudit) {
     const productionId = $('#content-review-form')?.dataset.productionId;
-    if (productionId) await persistProvenance(productionId, 'Evidence review saved.').catch(() => {});
+    if (!productionId) return;
+    runAudit.disabled = true;
+    runAudit.textContent = 'Auditing…';
+    try {
+      await mutate(`/api/content/${encodeURIComponent(productionId)}/research/audit`, 'POST', {}, 'Research audit finished.');
+      $('#content-dialog').close();
+      await openContent(productionId);
+    } catch (_error) {
+      runAudit.disabled = false;
+      runAudit.textContent = 'Run research audit';
+    }
     return;
   }
 
@@ -1615,7 +1509,7 @@ document.addEventListener('click', async event => {
   if (save) {
     try {
       await persistProvenance(save.dataset.saveContent);
-      await mutate(`/api/content/${encodeURIComponent(save.dataset.saveContent)}`, 'PATCH', contentFormData(), 'Draft and evidence review saved.');
+      await mutate(`/api/content/${encodeURIComponent(save.dataset.saveContent)}`, 'PATCH', contentFormData(), 'Draft saved.');
     } catch (_error) { /* toast already shown */ }
   }
 

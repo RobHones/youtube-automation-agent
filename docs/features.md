@@ -36,7 +36,7 @@ Open **Autonomous operator** in the dashboard and describe the channel outcome, 
 
 The operator refreshes YouTube trend and configured-competitor signals, checks recent channel topics, creates an evidence-labeled editorial plan, and sends each planned video through strategy, script, thumbnail, SEO, production, and workflow management. Active strategies also guide scheduled generation at the requested weekly cadence. Operator runs, decisions, progress, and failures persist in SQLite and remain visible in the dashboard.
 
-By default, finished videos wait for factual review, media-rights confirmation, and approval. Once approved, the publishing agent schedules and uploads them. Turning on autonomy does not bypass those gates, and simulated videos still cannot publish.
+By default, finished videos wait for media-rights confirmation and approval. There is no manual fact review. Once approved, the publishing agent schedules and uploads them. Turning on autonomy does not bypass those gates, and simulated videos still cannot publish.
 
 ## Resumable generation
 
@@ -56,7 +56,7 @@ Long-form productions use hybrid assembly: the agent generates bounded provider 
 
 Every production keeps a durable scene manifest with its narration, visual prompt, timing, provider/task identity, asset origin, rights state, evidence links, and revision history. Open **Scene Repair Studio** inside Review Studio to edit a scene, change its order, lock a scene that already works, upload a licensed replacement asset, or regenerate only that scene.
 
-Paid video regeneration always shows the provider and generated seconds and requires a separate confirmation. Uploaded assets require an explicit rights confirmation. Narration edits invalidate that scene's audio and factual review; live narration must be regenerated and any new factual claim must be reviewed against verified evidence before approval.
+Paid video regeneration always shows the provider and generated seconds and requires a separate confirmation. Uploaded assets require an explicit rights confirmation. Narration edits invalidate that scene's audio, so live narration must be regenerated before approval. In a researched episode they also make the research audit stale.
 
 Narration is fail-closed. The agent records the TTS provider, model, external task when available, generation time, cost evidence, and failure reason for every scene. If narration is missing, simulated, stale, or failed, the production cannot be approved, scheduled, or published. Use **Regenerate narration only** to repair the audio without spending video-generation credits or replacing a visual.
 
@@ -70,15 +70,16 @@ Open **Shorts Repurposing Studio** inside Review Studio and choose **Create 3 Sh
 
 Choose a blurred-canvas, center-crop, or stacked-focus layout, then render a real 9:16 MP4 with mobile-safe burned captions and a separate SRT file. The source video and narration are reused, so the default workflow does not spend new image, video, or TTS credits. Changing the layout invalidates the prior render and requires a fresh local render.
 
-Every Short has its own approval and schedule. Scheduling remains blocked until the source production is approved, provenance is resolved, uploaded media rights are confirmed, every source scene is current, and the operator explicitly confirms the Short's privacy and publish time. Published Shorts retain their parent-production identity while their analytics use a separate Shorts baseline.
+Every Short has its own approval and schedule. Scheduling remains blocked until the source production is approved, its research audit (if it was researched) has passed, uploaded media rights are confirmed, every source scene is current, and the operator explicitly confirms the Short's privacy and publish time. Published Shorts retain their parent-production identity while their analytics use a separate Shorts baseline.
 
 ## Evidence desk
 
-Every production has an **Evidence desk** inside Review Studio. Autonomous research carries exact YouTube source metadata into the production, while AI-generated scripts list the factual claims that need review. Add any official articles, datasets, asset licenses, or other evidence the script needs, verify each source, and connect it to the claims it supports.
+There is no manual fact review. A video either gets a machine research audit or it doesn't need one:
 
-A claim can be approved only when it links to a verified source. Unsupported claims remain blocking, and an intentional waiver requires a reviewer note. Productions with no externally verifiable factual claims are marked as not requiring provenance review. The separate factual-review and media-rights attestations remain required before scheduling.
+- **Research off (the default).** Nothing waits for a fact review, and you can approve and publish the video as soon as its quality checks pass.
+- **Research on.** With [automatic research](providers.md#research) enabled, Review Studio shows a read-only **Research audit** panel with the sources the worker found, the claims it checked, and any exceptions. The audit is the review. Editing audited text makes the audit stale, and approval and upload stay blocked until **Run research audit** passes again.
 
-With [automatic research](providers.md#research) enabled, the desk is filled automatically from the fact pack and audit, with unresolved exceptions shown first. Editing an audited claim, source or audience-facing text makes the audit stale. Select **Run research audit** again before approval.
+Review Studio also has a toggle for YouTube's altered or synthetic media disclosure, which is sent with the upload.
 
 Use the altered or synthetic media control only when the video contains realistic content that requires YouTube disclosure. The selected value is preserved in the publishing queue and included in the YouTube upload request.
 

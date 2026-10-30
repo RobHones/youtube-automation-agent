@@ -85,7 +85,7 @@ Each item links to its walkthrough in the [feature guide](docs/features.md).
 **Review**
 - **Content review:** quality checks, metadata editing, approval, and scheduling for each video.
 - [Scene Repair Studio](docs/features.md#scene-repair-studio-and-narration): edit, reorder, lock, replace, or regenerate a single scene, then rebuild the video.
-- [Evidence desk](docs/features.md#evidence-desk): link each factual claim in the script to a verified source before approval.
+- [Evidence desk](docs/features.md#evidence-desk): no manual fact review; researched episodes are checked by a machine audit instead.
 - [Discoverability preflight](docs/features.md#discoverability-preflight): advisory search and AI-answer checks from a bundled DarkzSEO audit.
 
 **Learn**

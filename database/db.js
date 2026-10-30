@@ -653,6 +653,11 @@ class Database {
     await this.ensureColumns('content_provenance', {
       research: "TEXT NOT NULL DEFAULT '{}'"
     });
+    // Manual evidence review is gone: only a research audit can block a production.
+    await this.executeQuery(
+      `UPDATE content_provenance SET status = 'not_required', claims = '[]'
+       WHERE status != 'not_required' AND research NOT LIKE '%"required":true%'`
+    );
 
     // Insert default settings
     await this.insertDefaultSettings();

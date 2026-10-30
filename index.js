@@ -928,25 +928,11 @@ class YouTubeAutomationAgent {
         const bundle = await this.db.getProductionBundle(req.params.productionId);
         if (!bundle) return res.status(404).json({ error: 'Content not found' });
         if (bundle.review_status === 'approved' || bundle.schedule) {
-          return res.status(409).json({ error: 'Provenance is locked after content is approved or scheduled' });
+          return res.status(409).json({ error: 'The disclosure is locked after content is approved or scheduled' });
         }
         if (!this.provenance) this.provenance = new ProvenanceService(this.db);
-        await this.provenance.review(bundle.id, req.body || {});
-        const updated = await this.db.getProductionBundle(bundle.id);
-        const profile = await this.db.getChannelProfile() || {};
-        const quality = await this.operator.runQualityChecks({
-          ...updated,
-          scheduledPublishTime: updated.scheduled_publish_time
-        }, profile);
-        const reviewStatus = quality.passed ? 'needs_review' : 'needs_attention';
-        const result = await this.db.saveContentReview(bundle.id, {
-          status: reviewStatus,
-          editorData: updated.editorData,
-          qualityChecks: quality.checks,
-          reviewNotes: quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`,
-          reviewedAt: null
-        });
-        return res.json({ success: true, result: this.decorateContentBundle(result) });
+        await this.provenance.setSyntheticMediaDisclosure(bundle.id, req.body?.containsSyntheticMedia === true);
+        return res.json({ success: true, result: this.decorateContentBundle(await this.db.getProductionBundle(bundle.id)) });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message });
       }
@@ -964,7 +950,7 @@ class YouTubeAutomationAgent {
         const audit = await research.auditContent(bundle, factPack);
         if (!this.provenance) this.provenance = new ProvenanceService(this.db);
         await this.provenance.recordAudit(bundle.id, bundle, audit);
-        await this.refreshContentReview(bundle.id, 'Research audit refreshed; final editorial approval is required.');
+        await this.refreshContentReview(bundle.id, 'Research audit refreshed.');
         return res.json({ success: true, result: this.decorateContentBundle(await this.db.getProductionBundle(bundle.id)) });
       } catch (error) {
         return res.status(error.status || 400).json({ success: false, error: error.message, exceptions: error.exceptions || [] });
@@ -1654,7 +1640,7 @@ class YouTubeAutomationAgent {
 
     // Step 6: Quality and approval gate
     return this.runGenerationStage(jobId, 'quality_review', 90, async () => {
-      const approvalRequired = Boolean(factPack) || await this.db.getSetting('approval_required') !== 'false';
+      const approvalRequired = await this.db.getSetting('approval_required') !== 'false';
       const packagingExperiment = approvalRequired && !factPack
         ? await this.preparePackagingExperiment(thumbnail, productionData, seoData, script)
         : null;
@@ -1750,7 +1736,6 @@ class YouTubeAutomationAgent {
       if (!['private', 'unlisted', 'public'].includes(input.privacyStatus)) throw new Error('Invalid privacy status');
       output.privacyStatus = input.privacyStatus;
     }
-    if (input.factChecked !== undefined) output.factChecked = input.factChecked === true;
     if (input.rightsConfirmed !== undefined) output.rightsConfirmed = input.rightsConfirmed === true;
     const experiment = output.packagingExperiment;
     if (input.selectedTitleVariant !== undefined) {
@@ -1864,7 +1849,7 @@ class YouTubeAutomationAgent {
     const status = quality.passed ? 'needs_review' : 'needs_attention';
     return this.db.saveContentReview(productionId, {
       status,
-      editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
+      editorData: { ...(bundle.editorData || {}), rightsConfirmed: false },
       qualityChecks: quality.checks,
       reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
       reviewedAt: null
@@ -1889,8 +1874,8 @@ class YouTubeAutomationAgent {
     const thumbnailVariant = packagingExperiment?.thumbnailVariants?.[editorData.selectedThumbnailVariant];
     const titleVariant = packagingExperiment?.titleVariants?.[editorData.selectedTitleVariant];
     if (titleVariant && input.title === undefined) editorData.title = titleVariant.title;
-    if (!editorData.factChecked || !editorData.rightsConfirmed) {
-      const error = new Error('Confirm the factual review and media rights checks before approval');
+    if (!editorData.rightsConfirmed) {
+      const error = new Error('Confirm the media rights check before approval');
       error.status = 409;
       throw error;
     }

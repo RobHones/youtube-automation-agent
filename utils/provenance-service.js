@@ -4,7 +4,7 @@ const { auditIsCurrent } = require('./research-contract');
 const SOURCE_TYPES = new Set(['article', 'video', 'dataset', 'official', 'asset', 'other']);
 const SOURCE_STATUSES = new Set(['pending', 'verified', 'rejected']);
 const CLAIM_RISKS = new Set(['standard', 'high']);
-const CLAIM_STATUSES = new Set(['pending', 'supported', 'unsupported', 'waived']);
+const CLAIM_STATUSES = new Set(['pending', 'supported', 'unsupported']);
 const clone = value => JSON.parse(JSON.stringify(value));
 
 class ProvenanceService {
@@ -23,14 +23,13 @@ class ProvenanceService {
     const machinePassed = required && auditIsCurrent(audit, production, factPack);
     const sources = this.normalizeSources((factPack?.sources || production.strategy?.researchSources || []).map(source => ({
       ...source,
-      ...(required ? { status: machinePassed ? 'verified' : 'pending', machineCheckStatus: machinePassed ? 'checked' : 'pending', humanReviewStatus: 'pending' } : {})
+      ...(required ? { status: machinePassed ? 'verified' : 'pending', machineCheckStatus: machinePassed ? 'checked' : 'pending' } : {})
     })));
     const sourceIdByUrl = new Map(sources.map(source => [source.url, source.id]));
-    const auditClaims = required ? (audit?.claims || factPack?.claims || []) : production.script?.claims || [];
-    const claims = this.normalizeClaims(auditClaims.map(claim => ({
-      ...claim,
-      ...(required ? { status: machinePassed ? 'supported' : 'pending', machineCheckStatus: machinePassed ? 'checked' : 'pending', humanReviewStatus: 'pending' } : {})
-    })), sources, sourceIdByUrl);
+    // Only researched episodes carry checked claims; without research nothing is reviewed.
+    const claims = required ? this.normalizeClaims((audit?.claims || factPack?.claims || []).map(claim => ({
+      ...claim, status: machinePassed ? 'supported' : 'pending', machineCheckStatus: machinePassed ? 'checked' : 'pending'
+    })), sources, sourceIdByUrl) : [];
     const research = required ? {
       required: true, factPack, audit,
       evidenceReviewFingerprint: this.reviewFingerprint(sources, claims)
@@ -40,26 +39,9 @@ class ProvenanceService {
     return this.db.getContentProvenance(productionId);
   }
 
-  async review(productionId, input = {}) {
+  async setSyntheticMediaDisclosure(productionId, containsSyntheticMedia) {
     const existing = await this.db.getContentProvenance(productionId) || {};
-    const mergeEvidence = (items, stored) => items.map(item => ({
-      ...(stored.find(value => value.id === item.id) || {}), ...item,
-      humanReviewStatus: item.status || 'pending'
-    }));
-    const sources = mergeEvidence(input.sources ?? existing.sources ?? [], existing.sources || []);
-    const claims = mergeEvidence(input.claims ?? existing.claims ?? [], existing.claims || []);
-    const research = existing.research ? clone(existing.research) : undefined;
-    if (research?.required && research.evidenceReviewFingerprint !== this.reviewFingerprint(
-      this.normalizeSources(sources), this.normalizeClaims(claims, this.normalizeSources(sources)))) {
-      research.invalidatedAt = new Date().toISOString();
-      research.invalidationReason = 'Evidence or claim wording changed after the machine audit; run research again.';
-    }
-    const provenance = this.build({
-      sources, claims, research,
-      humanReviewedAt: new Date().toISOString(),
-      containsSyntheticMedia: input.containsSyntheticMedia ?? existing.containsSyntheticMedia ?? false
-    });
-    await this.db.saveContentProvenance(productionId, provenance);
+    await this.db.saveContentProvenance(productionId, { ...existing, containsSyntheticMedia: containsSyntheticMedia === true });
     return this.db.getContentProvenance(productionId);
   }
 
@@ -67,29 +49,17 @@ class ProvenanceService {
     const sources = this.normalizeSources(input.sources || []);
     const sourceIds = new Set(sources.map(source => source.id));
     const claims = this.normalizeClaims(input.claims || [], sources);
+    for (const claim of claims) claim.sourceIds = claim.sourceIds.filter(id => sourceIds.has(id));
 
-    for (const claim of claims) {
-      claim.sourceIds = claim.sourceIds.filter(id => sourceIds.has(id));
-      if (claim.status === 'supported') {
-        const hasVerifiedSource = claim.sourceIds.some(id =>
-          sources.some(source => source.id === id && source.status === 'verified')
-        );
-        if (!hasVerifiedSource) throw this.invalid('A supported claim must link to at least one verified source');
-      }
-      if (claim.status === 'waived' && !claim.notes) {
-        throw this.invalid('A waived claim requires a reviewer note');
-      }
-    }
-
-    const unresolvedClaims = claims.filter(claim => !['supported', 'waived'].includes(claim.status));
+    // The machine audit is the only review: researched episodes pass or block on it,
+    // and episodes without research need no evidence review at all.
     const research = input.research;
     const machinePassed = research?.required === true && !research.invalidatedAt &&
       research.audit?.status === 'passed' && research.audit?.complete === true && research.audit?.machineChecked === true &&
       claims.length > 0 && research.evidenceReviewFingerprint === this.reviewFingerprint(sources, claims) &&
       (!input.production || auditIsCurrent(research.audit, input.production, research.factPack));
-    const status = research?.required && !machinePassed ? 'blocked' : claims.length === 0
-      ? 'not_required'
-      : unresolvedClaims.length === 0 ? 'verified' : 'blocked';
+    const status = research?.required ? (machinePassed ? 'verified' : 'blocked') : 'not_required';
+    const resolvedClaims = claims.filter(claim => claim.status === 'supported').length;
 
     return {
       sources,
@@ -97,15 +67,15 @@ class ProvenanceService {
       containsSyntheticMedia: input.containsSyntheticMedia === true,
       ...(research ? { research } : {}),
       status,
-      reviewedAt: status === 'verified' ? (research?.required ? input.humanReviewedAt || null : new Date().toISOString()) : null,
+      reviewedAt: status === 'verified' ? new Date().toISOString() : null,
       summary: {
         sourceCount: sources.length,
         verifiedSources: sources.filter(source => source.status === 'verified').length,
         claimCount: claims.length,
-        resolvedClaims: claims.length - unresolvedClaims.length,
+        resolvedClaims,
         highRiskClaims: claims.filter(claim => claim.riskLevel === 'high').length,
-        unresolvedClaims: unresolvedClaims.length,
-        ...(research?.required ? { machineChecked: machinePassed, humanReviewed: Boolean(input.humanReviewedAt), researchExceptions: research.audit?.exceptions?.length || research.factPack?.exceptions?.length || 0 } : {})
+        unresolvedClaims: claims.length - resolvedClaims,
+        ...(research?.required ? { machineChecked: machinePassed, researchExceptions: research.audit?.exceptions?.length || research.factPack?.exceptions?.length || 0 } : {})
       }
     };
   }
@@ -128,7 +98,7 @@ class ProvenanceService {
         sourceType: SOURCE_TYPES.has(item?.sourceType) ? item.sourceType : 'other',
         status: SOURCE_STATUSES.has(item?.status) ? item.status : 'pending',
         notes: this.text(item?.notes, 1000),
-        ...(item?.machineCheckStatus ? { machineCheckStatus: item.machineCheckStatus, humanReviewStatus: item.humanReviewStatus || 'pending' } : {}),
+        ...(item?.machineCheckStatus ? { machineCheckStatus: item.machineCheckStatus } : {}),
         ...(item?.passage ? { passage: this.text(item.passage, 4000) } : {}),
         ...(item?.location ? { location: this.text(item.location, 1000) } : {}),
         ...(item?.evidenceHash ? { evidenceHash: this.text(item.evidenceHash, 100) } : {}),
@@ -160,7 +130,7 @@ class ProvenanceService {
         sourceIds,
         status: CLAIM_STATUSES.has(item?.status) ? item.status : 'pending',
         notes: this.text(item?.notes, 1000),
-        ...(item?.machineCheckStatus ? { machineCheckStatus: item.machineCheckStatus, humanReviewStatus: item.humanReviewStatus || 'pending' } : {}),
+        ...(item?.machineCheckStatus ? { machineCheckStatus: item.machineCheckStatus } : {}),
         ...(Array.isArray(item?.factIds) ? { factIds: item.factIds.map(String) } : {}),
         ...(Array.isArray(item?.evidence) ? { evidence: clone(item.evidence) } : {}),
         ...(item?.uncertainty ? { uncertainty: this.text(item.uncertainty, 1000) } : {})
@@ -202,12 +172,6 @@ class ProvenanceService {
       ...production,
       research: { required: true, factPack, audit }
     });
-    // A refreshed audit creates a new evidence revision. Reviewer notes are useful
-    // context, but previous editorial approval cannot apply to the new revision.
-    const sourceNotes = new Map((existing.sources || []).map(source => [source.id, source.notes]));
-    const claimNotes = new Map((existing.claims || []).map(claim => [claim.text, claim.notes]));
-    for (const source of initialized.sources || []) source.notes = sourceNotes.get(source.id) || source.notes;
-    for (const claim of initialized.claims || []) claim.notes = claimNotes.get(claim.text) || claim.notes;
     initialized.containsSyntheticMedia = existing.containsSyntheticMedia ?? initialized.containsSyntheticMedia;
     await this.db.saveContentProvenance(productionId, initialized);
     return this.db.getContentProvenance(productionId);

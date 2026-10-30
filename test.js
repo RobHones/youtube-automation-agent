@@ -1538,7 +1538,7 @@ class SystemTest {
       await db.saveProductionData(production);
       await db.saveProductionSnapshot(production);
       await db.saveContentReview(productionId, {
-        status: 'approved', editorData: { factChecked: true, rightsConfirmed: true },
+        status: 'approved', editorData: { rightsConfirmed: true },
         qualityChecks: [], reviewedAt: new Date().toISOString()
       });
       await db.saveContentProvenance(productionId, {
@@ -1661,13 +1661,22 @@ class SystemTest {
 
       const provenanceService = new ProvenanceService(db);
       const initialized = await provenanceService.initialize(productionId, production);
-      if (
-        initialized.status !== 'blocked' || initialized.sources.length !== 1 ||
-        initialized.claims.length !== 1 || initialized.claims[0].sourceIds.length !== 1
-      ) {
-        throw new Error('Generated research sources and claims were not initialized as unresolved provenance');
+      if (initialized.status !== 'not_required' || initialized.sources.length !== 1 || initialized.claims.length !== 0) {
+        throw new Error('A production without research was held for a manual evidence review');
       }
 
+      const disclosed = await provenanceService.setSyntheticMediaDisclosure(productionId, true);
+      if (!disclosed.containsSyntheticMedia || disclosed.status !== 'not_required') {
+        throw new Error('The synthetic-media disclosure was not persisted');
+      }
+
+      const bundle = await db.getProductionBundle(productionId);
+      const quality = await new OperatorService(db).runQualityChecks({ ...production, provenance: bundle.provenance }, {});
+      if (!quality.passed || !quality.checks.find(check => check.id === 'provenance' && check.passed)) {
+        throw new Error('A production without research did not pass the provenance quality check');
+      }
+
+      await provenanceService.initialize(productionId, { ...production, research: { required: true, factPack: { sources: [], claims: [] } } });
       const publishGuard = new PublishingSchedulingAgent(db, {});
       publishGuard.publishQueue = [{ productionId, status: 'scheduled', metadata: {} }];
       let blockedPublishRejected = false;
@@ -1676,33 +1685,7 @@ class SystemTest {
       } catch (error) {
         blockedPublishRejected = error.code === 'PROVENANCE_BLOCKED';
       }
-      if (!blockedPublishRejected) throw new Error('Publishing did not independently enforce the provenance gate');
-
-      let unverifiedSupportRejected = false;
-      try {
-        await provenanceService.review(productionId, {
-          sources: initialized.sources,
-          claims: [{ ...initialized.claims[0], status: 'supported' }]
-        });
-      } catch (error) {
-        unverifiedSupportRejected = /verified source/.test(error.message);
-      }
-      if (!unverifiedSupportRejected) throw new Error('A claim was supported without reviewer-verified evidence');
-
-      const reviewed = await provenanceService.review(productionId, {
-        sources: initialized.sources.map(source => ({ ...source, status: 'verified' })),
-        claims: [{ ...initialized.claims[0], status: 'supported' }],
-        containsSyntheticMedia: true
-      });
-      if (reviewed.status !== 'verified' || !reviewed.containsSyntheticMedia || reviewed.summary.unresolvedClaims !== 0) {
-        throw new Error('A complete evidence review was not persisted as verified');
-      }
-
-      const bundle = await db.getProductionBundle(productionId);
-      const quality = await new OperatorService(db).runQualityChecks({ ...production, provenance: bundle.provenance }, {});
-      if (!quality.passed || !quality.checks.find(check => check.id === 'provenance' && check.passed)) {
-        throw new Error('Verified provenance did not satisfy the production quality gate');
-      }
+      if (!blockedPublishRejected) throw new Error('Publishing did not enforce a failed research audit');
 
       let uploadRequest;
       const publishing = new PublishingSchedulingAgent(db, {});
@@ -1722,16 +1705,6 @@ class SystemTest {
         throw new Error('Synthetic-media disclosure was not handed to the YouTube upload request');
       }
 
-      let emptyWaiverRejected = false;
-      try {
-        new ProvenanceService(db).build({
-          sources: reviewed.sources,
-          claims: [{ ...reviewed.claims[0], status: 'waived', notes: '' }]
-        });
-      } catch (error) {
-        emptyWaiverRejected = /reviewer note/.test(error.message);
-      }
-      if (!emptyWaiverRejected) throw new Error('A claim waiver without a reviewer note was accepted');
     } finally {
       await db.close();
       await fs.rm(directory, { recursive: true, force: true });

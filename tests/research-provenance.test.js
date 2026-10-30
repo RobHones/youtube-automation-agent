@@ -40,13 +40,12 @@ function fixture() {
   return { production, factPack, audit, service: new ProvenanceService(db) };
 }
 
-test('machine audit initializes evidence without presenting it as human review', async () => {
+test('a passing machine audit verifies the episode with no human review', async () => {
   const { production, service } = fixture();
   const provenance = await service.initialize('episode', production);
   assert.equal(provenance.status, 'verified');
-  assert.equal(provenance.reviewedAt, null);
+  assert.ok(provenance.reviewedAt);
   assert.equal(provenance.summary.machineChecked, true);
-  assert.equal(provenance.summary.humanReviewed, false);
   assert.equal(provenance.claims[0].id, 'audit_demonstration');
   assert.equal(provenance.sources[0].location, 'page 44');
   assert.equal(provenance.claims[0].evidence[0].passage, 'The railway was demonstrated in 1864.');
@@ -75,48 +74,28 @@ test('missing audit or empty extracted claims cannot become not-required provena
   }
 });
 
-test('manual review preserves immutable machine evidence and cannot inject a passing audit', async () => {
+test('the disclosure toggle keeps the machine evidence and its passing audit', async () => {
   const { production, service } = fixture();
   const original = await service.initialize('episode', production);
-  const reviewed = await service.review('episode', {
-    sources: original.sources.map(source => ({ id: source.id, url: source.url, title: source.title, publisher: source.publisher, status: 'verified', notes: 'Reviewed archive.' })),
-    claims: original.claims.map(claim => ({ id: claim.id, text: claim.text, sourceIds: claim.sourceIds, riskLevel: claim.riskLevel, status: 'supported', notes: 'Passage checked.' })),
-    research: { required: false }, containsSyntheticMedia: true
-  });
-  assert.equal(reviewed.status, 'verified');
-  assert.equal(reviewed.summary.humanReviewed, true);
-  assert.equal(reviewed.research.required, true);
-  assert.equal(reviewed.sources[0].passage, original.sources[0].passage);
-  assert.equal(service.assertResearchCurrent(production, reviewed), true);
-  const altered = await service.review('episode', {
-    claims: [{ ...reviewed.claims[0], text: 'It demonstrated a speed of 100 mph.', status: 'supported' }],
-    research: { required: true, audit: production.research.audit }
-  });
-  assert.equal(altered.status, 'blocked');
-  assert.ok(altered.research.invalidatedAt);
-  assert.throws(() => service.assertResearchCurrent(production, altered), { code: 'RESEARCH_AUDIT_REQUIRED' });
+  const disclosed = await service.setSyntheticMediaDisclosure('episode', true);
+  assert.equal(disclosed.containsSyntheticMedia, true);
+  assert.equal(disclosed.status, 'verified');
+  assert.deepEqual(disclosed.claims, original.claims);
+  assert.equal(service.assertResearchCurrent(production, disclosed), true);
 });
 
-test('removing all machine claims remains blocked despite a manual waiver', async () => {
-  const { production, service } = fixture();
-  await service.initialize('episode', production);
-  const reviewed = await service.review('episode', { claims: [] });
-  assert.equal(reviewed.status, 'blocked');
-  assert.throws(() => service.assertResearchCurrent(production, reviewed), { code: 'RESEARCH_AUDIT_REQUIRED' });
-});
-
-test('a fresh audit refreshes content revision and retains reviewer context', async () => {
+test('a fresh audit refreshes the content revision and keeps the disclosure', async () => {
   const { production, service, audit, factPack } = fixture();
-  const initial = await service.initialize('episode', production);
-  await service.review('episode', { claims: initial.claims.map(claim => ({ ...claim, notes: 'Check original archive.' })), containsSyntheticMedia: true });
+  await service.initialize('episode', production);
+  await service.setSyntheticMediaDisclosure('episode', true);
   const changed = { ...production, seo: { ...production.seo, title: 'An experimental railway' } };
+  assert.throws(() => service.assertResearchCurrent(changed, production.provenance), { code: 'RESEARCH_AUDIT_REQUIRED' });
   const refreshedAudit = {
     ...audit, contentFingerprint: contentFingerprint(changed), evidenceFingerprint: evidenceFingerprint(factPack),
     coverage: contentUnits(changed).map(unit => ({ unitId: unit.id, text: unit.text, classification: 'factual', claimIds: ['audit_demonstration'] }))
   };
   const refreshed = await service.recordAudit('episode', changed, refreshedAudit);
-  assert.equal(refreshed.claims[0].notes, 'Check original archive.');
-  assert.equal(refreshed.reviewedAt, null);
+  assert.equal(refreshed.status, 'verified');
   assert.equal(refreshed.containsSyntheticMedia, true);
   assert.equal(service.assertResearchCurrent(changed, refreshed), true);
 });
@@ -168,12 +147,15 @@ test('researched writer fails closed on failed generation, missing facts and fab
   await assert.rejects(empty.agent.generateScript(empty.strategy), /nonempty fact pack/);
 });
 
-test('manual provenance remains compatible with explicit source and claim review', async () => {
+test('without research, script claims never wait for a review', async () => {
   const { service } = fixture();
-  const manual = service.build({
-    sources: [{ id: 'manual_source', url: 'https://example.com/document', status: 'verified' }],
-    claims: [{ id: 'manual_claim', text: 'A reviewed claim.', sourceIds: ['manual_source'], status: 'supported' }]
-  });
-  assert.equal(manual.status, 'verified');
-  assert.equal(service.assertResearchCurrent({}, manual), true);
+  const production = {
+    strategy: { researchSources: [{ url: 'https://example.com/document', title: 'Background reading' }] },
+    script: { title: 'A video', claims: [{ text: 'An unsourced claim.', riskLevel: 'high' }] }
+  };
+  const provenance = await service.initialize('plain', production);
+  assert.equal(provenance.status, 'not_required');
+  assert.deepEqual(provenance.claims, []);
+  assert.equal(provenance.sources.length, 1);
+  assert.equal(service.assertResearchCurrent(production, provenance), true);
 });

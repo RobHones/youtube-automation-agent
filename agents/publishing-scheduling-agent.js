@@ -118,7 +118,7 @@ class PublishingSchedulingAgent {
       if (this.db.getProductionBundle) {
         productionBundle = await this.db.getProductionBundle(contentId);
         if (productionBundle && !['verified', 'not_required'].includes(productionBundle.provenance?.status || 'not_required')) {
-          const error = new Error('Publishing is blocked until every factual claim is supported or explicitly waived');
+          const error = new Error('Publishing is blocked until the research audit passes');
           error.status = 409;
           error.code = 'PROVENANCE_BLOCKED';
           throw error;

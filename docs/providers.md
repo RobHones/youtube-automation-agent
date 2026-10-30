@@ -97,11 +97,11 @@ Automatic research uses your ChatGPT (Codex) or Claude (Claude Code) subscriptio
 1. **Fact pack.** The worker returns sources with short verbatim passages and page or section locations, plus atomic claims linked to those passages. A pack is blocked if a source wasn't opened during the run, a passage isn't in its source, a claim is compound, a contradiction is unresolved, or a high-risk claim lacks two independent evidence origins (copies of one account count once). If evidence is thin, the next candidate topic is tried.
 2. **Grounded writing.** The script and metadata may use only facts from the pack. Template fallbacks are disabled for researched documentaries.
 3. **Audit.** A separate pass splits all audience-facing text (narration, title, description, tags, thumbnail wording) into units and classifies each one. Every factual unit must link to supported claims. Failed audits trigger a bounded number of automatic rewrites.
-4. **Approval.** The Evidence desk shows the machine-checked fact pack and any exceptions. Editing audited text or evidence makes the audit stale. Approval and upload stay blocked until **Run research audit** passes again. Machine checks never replace final editorial approval or media-rights confirmation.
+4. **Approval.** Review Studio shows the audited sources, claims and any exceptions as read-only. The audit is the only fact review, so nothing needs checking by hand. Editing audited text makes the audit stale, and approval and upload stay blocked until **Run research audit** passes again. Media-rights confirmation and approval (if `approval_required` is on) still apply as for any video.
 
 Scheduled runs stay off until you've trialled researched episodes and enabled **daily research** in Channel setup (or set `RESEARCH_SCHEDULED_ENABLED=true`). Research counts against your subscription's usage limits.
 
-ChatGPT research doesn't capture page text, so its passages are matched against the worker's own sources rather than against the downloaded page. Claude's WebFetch results are captured, and each passage is also checked against them. Treat ChatGPT passages as leads to confirm in the Evidence desk.
+ChatGPT research doesn't capture page text, so its passages are matched against the worker's own sources rather than against the downloaded page. Claude's WebFetch results are captured, and each passage is also checked against them. Claude gives the stronger check if you want passages matched against the real page.
 
 ## Video
 

@@ -83,7 +83,7 @@ curl http://localhost:3456/api/content/:contentId
 curl -X POST http://localhost:3456/api/content/:contentId/approve \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d '{"privacyStatus":"private","factChecked":true,"rightsConfirmed":true}'
+  -d '{"privacyStatus":"private","rightsConfirmed":true}'
 ```
 
 ## Route reference
@@ -129,7 +129,7 @@ Image settings accepted by `PUT /api/settings`: `image_provider` (`auto`, `none`
 | POST | `/api/content/:productionId/publish-now` | Publish immediately |
 | PATCH, DELETE | `/api/content/:productionId/schedule` | Reschedule, or remove the schedule without deleting content |
 | POST | `/publish/:contentId` | Publish a production or a Short |
-| PUT | `/api/content/:productionId/provenance` | Update the evidence desk |
+| PUT | `/api/content/:productionId/provenance` | Set the synthetic-media disclosure (`containsSyntheticMedia`) |
 | POST | `/api/content/:productionId/discoverability/run` | Run the discoverability preflight |
 | PATCH | `/api/discoverability/findings/:findingId` | Keep or dismiss a finding |
 | GET | `/api/content/:productionId/asset/:kind` | Download `video`, `thumbnail`, `captions`, or `script` |

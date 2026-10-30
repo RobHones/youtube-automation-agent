@@ -126,7 +126,7 @@ Return only valid JSON with this exact shape:
   "cta": "clear call to action",
   "conclusion": { "recap": ["spoken recap"], "finalThought": "evidence-grounded closing thought" },
   "claims": [
-    { "text": "one atomic factual claim a reviewer must verify", "riskLevel": "standard|high", "factIds": ["supplied fact ID"], "sourceUrls": ["exact supplied source URL"] }
+    { "text": "one atomic factual claim the script states", "riskLevel": "standard|high", "factIds": ["supplied fact ID"], "sourceUrls": ["exact supplied source URL"] }
   ]
 }
 
